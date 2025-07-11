@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:background="@drawable/floating_window_background">
+
+    <!-- 主要按钮容器 -->
+    <LinearLayout
+        android:id="@+id/buttonContainer"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="8dp">
+
+        <Button
+            android:id="@+id/startButton"
+            android:layout_width="80dp"
+            android:layout_height="40dp"
+            android:text="开始"
+            android:textSize="12sp"
+            android:layout_marginBottom="4dp" />
+
+        <Button
+            android:id="@+id/stopButton"
+            android:layout_width="80dp"
+            android:layout_height="40dp"
+            android:text="停止"
+            android:textSize="12sp"
+            android:layout_marginBottom="4dp"
+            android:enabled="false" />
+
+        <Button
+            android:id="@+id/hideButton"
+            android:layout_width="80dp"
+            android:layout_height="40dp"
+            android:text="隐藏"
+            android:textSize="12sp"
+            android:layout_marginBottom="4dp" />
+
+        <Button
+            android:id="@+id/printButton"
+            android:layout_width="80dp"
+            android:layout_height="40dp"
+            android:text="打印"
+            android:textSize="12sp" />
+
+    </LinearLayout>
+
+    <!-- 边缘指示器 (隐藏时显示) -->
+    <View
+        android:id="@+id/edgeIndicator"
+        android:layout_width="20dp"
+        android:layout_height="60dp"
+        android:background="#80000000"
+        android:visibility="gone" />
+
+</FrameLayout>

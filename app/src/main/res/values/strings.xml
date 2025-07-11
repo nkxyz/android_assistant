@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">xyzAssister</string>
+    <string name="accessibility_service_description">XYZ无障碍助手服务，用于获取屏幕内容并进行自动化操作。可以查找和点击指定的UI元素，支持拖拽和滑动操作。</string>
+</resources>
