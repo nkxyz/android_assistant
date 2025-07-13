@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
 import android.view.accessibility.AccessibilityManager
 import android.widget.Button
 import android.widget.TextView
@@ -76,8 +77,30 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun openAccessibilitySettings() {
-        val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-        startActivity(intent)
+        try {
+            // 方法1：直接跳转到本应用的无障碍服务设置页面
+            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+
+            // 添加额外参数，尝试直接定位到本应用的服务
+            intent.putExtra(":settings:fragment_args_key", "${packageName}/${XyzAccessibilityService::class.java.name}")
+            intent.putExtra(":settings:show_fragment_args", Bundle().apply {
+                putString("package", packageName)
+            })
+
+            startActivity(intent)
+
+            // 显示更详细的指导信息
+            Toast.makeText(this, "请在无障碍设置中找到并启用 'XYZ无障碍助手' 服务", Toast.LENGTH_LONG).show()
+
+        } catch (e: Exception) {
+            // 如果上述方法失败，回退到通用的无障碍设置页面
+            Log.e("MainActivity", "无法直接跳转到应用设置页面: ${e.message}")
+            val fallbackIntent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
+            fallbackIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(fallbackIntent)
+            Toast.makeText(this, "请在设置中找到并启用本应用的无障碍服务", Toast.LENGTH_LONG).show()
+        }
     }
 
     private fun startFloatingService() {
