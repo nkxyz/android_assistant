@@ -153,6 +153,15 @@ class FloatingWindowService : Service() {
                 printScreenElements()
             }
 
+            // 为边缘指示器添加点击监听器，点击后恢复悬浮窗
+            val edgeIndicator = view.findViewById<View>(R.id.edgeIndicator)
+            edgeIndicator.setOnClickListener {
+                if (isHidden) {
+                    hideToEdge() // 调用hideToEdge()来恢复窗口，因为它已经有切换逻辑
+                    Log.d(TAG, "点击边缘指示器，恢复悬浮窗")
+                }
+            }
+
             updateButtonStates()
         }
     }

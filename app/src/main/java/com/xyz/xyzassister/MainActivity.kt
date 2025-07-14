@@ -3,6 +3,7 @@ package com.xyz.xyzassister
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -13,6 +14,10 @@ import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import rikka.shizuku.Shizuku
+import rikka.shizuku.Shizuku.OnBinderDeadListener
+import rikka.shizuku.Shizuku.OnBinderReceivedListener
+import rikka.shizuku.Shizuku.OnRequestPermissionResultListener
 
 class MainActivity : AppCompatActivity() {
 
@@ -24,9 +29,17 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-
+        Shizuku.addBinderReceivedListenerSticky(BINDER_RECEIVED_LISTENER);
+        Shizuku.addBinderDeadListener(BINDER_DEAD_LISTENER);
+        Shizuku.addRequestPermissionResultListener(REQUEST_PERMISSION_RESULT_LISTENER)
+        checkPermission(123123)
         initViews()
         updateStatus()
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        Shizuku.removeRequestPermissionResultListener(REQUEST_PERMISSION_RESULT_LISTENER)
     }
 
     override fun onResume() {
@@ -134,5 +147,51 @@ class MainActivity : AppCompatActivity() {
         val intent = Intent(this, FloatingWindowService::class.java)
         stopService(intent)
         Toast.makeText(this, "悬浮窗服务已停止", Toast.LENGTH_SHORT).show()
+    }
+
+
+    private fun onRequestPermissionsResult(requestCode: Int, grantResult: Int) {
+        val granted = grantResult == PackageManager.PERMISSION_GRANTED
+        // Do stuff based on the result and the request code
+        Log.d("xyzAssisterMain", "onRequestPermissionsResult: $requestCode, $granted")
+    }
+
+    private val REQUEST_PERMISSION_RESULT_LISTENER =
+        Shizuku.OnRequestPermissionResultListener { requestCode: Int, grantResult: Int ->
+            this.onRequestPermissionsResult(
+                requestCode,
+                grantResult
+            )
+        }
+
+    private fun checkPermission(code: Int): Boolean {
+        if (Shizuku.isPreV11()) {
+            // Pre-v11 is unsupported
+            return false
+        }
+
+        if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
+            // Granted
+            return true
+        } else if (Shizuku.shouldShowRequestPermissionRationale()) {
+            // Users choose "Deny and don't ask again"
+            return false
+        } else {
+            // Request the permission
+            Shizuku.requestPermission(code)
+            return false
+        }
+    }
+
+    private val BINDER_RECEIVED_LISTENER = OnBinderReceivedListener {
+        if (Shizuku.isPreV11()) {
+            Log.d("xyzAssisterMain", "Shizuku pre-v11 is not supported")
+        } else {
+            Log.d("xyzAssisterMain", "Binder received")
+        }
+    }
+
+    private val BINDER_DEAD_LISTENER = OnBinderDeadListener {
+        Log.d("xyzAssisterMain", "Binder dead")
     }
 }

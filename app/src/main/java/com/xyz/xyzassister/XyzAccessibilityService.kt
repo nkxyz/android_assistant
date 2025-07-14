@@ -2,20 +2,30 @@ package com.xyz.xyzassister
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
+import android.app.Instrumentation
+import android.content.ComponentName
+import android.content.ServiceConnection
+import android.content.pm.PackageManager
 import android.graphics.Path
-import android.graphics.Rect
 import android.graphics.PixelFormat
+import android.graphics.Rect
+import android.os.Bundle
 import android.os.Handler
+import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.ImageView
+import rikka.shizuku.Shizuku
+import rikka.shizuku.Shizuku.OnRequestPermissionResultListener
 import kotlin.random.Random
-import java.util.concurrent.Executors
+
 
 /**
  * 控件查找条件类
@@ -42,6 +52,37 @@ class XyzAccessibilityService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private val activeIndicators = mutableListOf<View>()
 
+    // Shizuku 相关字段
+    private var instrumentation: Instrumentation? = null
+    private var isShizukuAvailable: Boolean = false
+    private var isShizukuPermissionGranted: Boolean = false
+
+    // Binder 服务相关字段
+    private var instrumentationService: IInstrumentationService? = null
+    private var serviceConnection: ServiceConnection? = null
+    private var userServiceArgs: Shizuku.UserServiceArgs? = null
+
+    // Shizuku 事件监听器
+    private val shizukuPermissionResultListener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
+        Log.d(TAG, "Shizuku 权限请求结果: requestCode=$requestCode, grantResult=$grantResult")
+        isShizukuPermissionGranted = grantResult == android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (isShizukuPermissionGranted) {
+            initializeInstrumentation()
+        }
+    }
+
+    private val shizukuBinderReceivedListener = Shizuku.OnBinderReceivedListener {
+        Log.d(TAG, "Shizuku Binder 已接收")
+        isShizukuAvailable = true
+        checkShizukuPermission()
+    }
+
+    private val shizukuBinderDeadListener = Shizuku.OnBinderDeadListener {
+        Log.d(TAG, "Shizuku Binder 已断开")
+        isShizukuAvailable = false
+        isShizukuPermissionGranted = false
+        instrumentation = null
+    }
 
     // 存储当前窗口/Activity信息
     private var currentPackageName: String? = null
@@ -106,12 +147,418 @@ class XyzAccessibilityService : AccessibilityService() {
         Log.d(TAG, "无障碍服务被中断")
     }
 
+    override fun onCreate() {
+        super.onCreate()
+        initializeShizuku()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         // 清除所有点击指示器
         clearAllClickIndicators()
+        // 清理 Shizuku 资源
+        cleanupShizuku()
         instance = null
         Log.d(TAG, "无障碍服务已销毁")
+    }
+
+    /**
+     * 初始化 Shizuku 服务
+     */
+    private fun initializeShizuku() {
+        try {
+            // 添加 Shizuku 监听器
+            Shizuku.addRequestPermissionResultListener(shizukuPermissionResultListener)
+            Shizuku.addBinderReceivedListener(shizukuBinderReceivedListener)
+            Shizuku.addBinderDeadListener(shizukuBinderDeadListener)
+
+            // 检查 Shizuku 是否可用
+            if (Shizuku.pingBinder()) {
+                Log.d(TAG, "Shizuku 服务可用")
+                isShizukuAvailable = true
+                checkShizukuPermission()
+            } else {
+                Log.d(TAG, "Shizuku 服务不可用")
+                isShizukuAvailable = false
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "初始化 Shizuku 失败", e)
+            isShizukuAvailable = false
+        }
+    }
+
+    /**
+     * 检查并请求 Shizuku 权限
+     */
+    private fun checkShizukuPermission() {
+        try {
+            if (Shizuku.checkSelfPermission() == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                Log.d(TAG, "Shizuku 权限已授予")
+                isShizukuPermissionGranted = true
+                initializeInstrumentation()
+            } else {
+                Log.d(TAG, "请求 Shizuku 权限")
+                isShizukuPermissionGranted = false
+                Shizuku.requestPermission(0)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "检查 Shizuku 权限失败", e)
+            isShizukuPermissionGranted = false
+        }
+    }
+
+    /**
+     * 初始化 Instrumentation
+     */
+    private fun initializeInstrumentation() {
+        try {
+            // 使用 bindUserService 创建系统级服务
+            bindInstrumentationService()
+
+            // 通过 Shizuku 获取系统权限创建 Instrumentation
+            instrumentation = Instrumentation()
+            Log.d(TAG, "Instrumentation 初始化成功")
+        } catch (e: Exception) {
+            Log.e(TAG, "初始化 bindUserService 失败", e)
+            instrumentation = null
+            instrumentationService = null
+        }
+    }
+
+    /**
+     * 绑定系统级Instrumentation服务
+     */
+    private fun bindInstrumentationService() {
+        try {
+            if (Shizuku.checkSelfPermission() != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                Log.e(TAG, "Shizuku权限未授予，无法绑定服务")
+                return
+            }
+
+            val serviceArgs = Shizuku.UserServiceArgs(
+                ComponentName(packageName, InstrumentationService::class.java.name)
+            )
+            .daemon(false)
+            .processNameSuffix("instrumentation")
+            .debuggable(true)
+            .version(1)
+
+            userServiceArgs = serviceArgs
+
+            val connection = object : ServiceConnection {
+                override fun onServiceConnected(componentName: ComponentName, binder: IBinder) {
+                    Log.d(TAG, "InstrumentationService 连接成功")
+                    instrumentationService = IInstrumentationService.Stub.asInterface(binder)
+
+                    // 测试服务是否可用
+                    try {
+                        val isAvailable = instrumentationService?.isServiceAvailable() ?: false
+                        Log.d(TAG, "InstrumentationService 可用性: $isAvailable")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "测试InstrumentationService失败", e)
+                    }
+                }
+
+                override fun onServiceDisconnected(componentName: ComponentName) {
+                    Log.d(TAG, "InstrumentationService 连接断开")
+                    instrumentationService = null
+                }
+            }
+
+            serviceConnection = connection
+            Shizuku.bindUserService(serviceArgs, connection)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "绑定InstrumentationService失败", e)
+            instrumentationService = null
+        }
+    }
+
+    /**
+     * 解绑服务
+     */
+    private fun unbindInstrumentationService() {
+        try {
+            instrumentationService?.destroy()
+            if (userServiceArgs != null && serviceConnection != null) {
+                Shizuku.unbindUserService(userServiceArgs!!, serviceConnection!!, true)
+            }
+            instrumentationService = null
+            serviceConnection = null
+            userServiceArgs = null
+            Log.d(TAG, "InstrumentationService 解绑完成")
+        } catch (e: Exception) {
+            Log.e(TAG, "解绑InstrumentationService失败", e)
+        }
+    }
+
+    /**
+     * 清理 Shizuku 资源
+     */
+    private fun cleanupShizuku() {
+        try {
+            // 解绑Instrumentation服务
+            unbindInstrumentationService()
+
+            Shizuku.removeRequestPermissionResultListener(shizukuPermissionResultListener)
+            Shizuku.removeBinderReceivedListener(shizukuBinderReceivedListener)
+            Shizuku.removeBinderDeadListener(shizukuBinderDeadListener)
+            instrumentation = null
+            isShizukuAvailable = false
+            isShizukuPermissionGranted = false
+            Log.d(TAG, "Shizuku 资源清理完成")
+        } catch (e: Exception) {
+            Log.e(TAG, "清理 Shizuku 资源失败", e)
+        }
+    }
+
+    /**
+     * 使用 Instrumentation 进行点击
+     */
+    private fun clickAtWithInstrumentation(x: Float, y: Float): Boolean {
+        return try {
+            val instrumentation = this.instrumentation ?: return false
+
+            val downTime = SystemClock.uptimeMillis()
+            val eventTime = SystemClock.uptimeMillis()
+
+            // 创建 ACTION_DOWN 事件
+            val downEvent = MotionEvent.obtain(
+                downTime, eventTime, MotionEvent.ACTION_DOWN, x, y, 0
+            )
+
+            // 创建 ACTION_UP 事件
+            val upEvent = MotionEvent.obtain(
+                downTime, eventTime + 100, MotionEvent.ACTION_UP, x, y, 0
+            )
+
+            // 发送事件
+            instrumentation.sendPointerSync(downEvent)
+            Thread.sleep(100) // 短暂延迟模拟真实点击
+            instrumentation.sendPointerSync(upEvent)
+
+            // 回收事件
+            downEvent.recycle()
+            upEvent.recycle()
+
+            Log.d(TAG, "使用 Instrumentation 点击成功: ($x, $y)")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Instrumentation 点击失败", e)
+            false
+        }
+    }
+
+    /**
+     * 使用 Instrumentation 进行拖拽
+     */
+    private fun dragFromToWithInstrumentation(
+        startX: Float, 
+        startY: Float, 
+        endX: Float, 
+        endY: Float, 
+        duration: Long = 500
+    ): Boolean {
+        return try {
+            val instrumentation = this.instrumentation ?: return false
+
+            val downTime = SystemClock.uptimeMillis()
+            val steps = (duration / 16).toInt().coerceAtLeast(1) // 16ms per step for smooth animation
+
+            // 创建 ACTION_DOWN 事件
+            val downEvent = MotionEvent.obtain(
+                downTime, downTime, MotionEvent.ACTION_DOWN, startX, startY, 0
+            )
+            instrumentation.sendPointerSync(downEvent)
+            downEvent.recycle()
+
+            // 创建中间的 ACTION_MOVE 事件
+            for (i in 1 until steps) {
+                val progress = i.toFloat() / steps
+                val currentX = startX + (endX - startX) * progress
+                val currentY = startY + (endY - startY) * progress
+                val eventTime = downTime + (duration * progress).toLong()
+
+                val moveEvent = MotionEvent.obtain(
+                    downTime, eventTime, MotionEvent.ACTION_MOVE, currentX, currentY, 0
+                )
+                instrumentation.sendPointerSync(moveEvent)
+                moveEvent.recycle()
+
+                Thread.sleep(16) // 16ms delay for smooth animation
+            }
+
+            // 创建 ACTION_UP 事件
+            val upEvent = MotionEvent.obtain(
+                downTime, downTime + duration, MotionEvent.ACTION_UP, endX, endY, 0
+            )
+            instrumentation.sendPointerSync(upEvent)
+            upEvent.recycle()
+
+            Log.d(TAG, "使用 Instrumentation 拖拽成功: ($startX, $startY) -> ($endX, $endY)")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Instrumentation 拖拽失败", e)
+            false
+        }
+    }
+
+    /**
+     * 使用 Instrumentation 进行长按
+     */
+    private fun longClickAtWithInstrumentation(x: Float, y: Float, duration: Long = 1000): Boolean {
+        return try {
+            val instrumentation = this.instrumentation ?: return false
+
+            val downTime = SystemClock.uptimeMillis()
+
+            // 创建 ACTION_DOWN 事件
+            val downEvent = MotionEvent.obtain(
+                downTime, downTime, MotionEvent.ACTION_DOWN, x, y, 0
+            )
+            instrumentation.sendPointerSync(downEvent)
+            downEvent.recycle()
+
+            // 等待指定时间
+            Thread.sleep(duration)
+
+            // 创建 ACTION_UP 事件
+            val upEvent = MotionEvent.obtain(
+                downTime, downTime + duration, MotionEvent.ACTION_UP, x, y, 0
+            )
+            instrumentation.sendPointerSync(upEvent)
+            upEvent.recycle()
+
+            Log.d(TAG, "使用 Instrumentation 长按成功: ($x, $y), 持续时间: ${duration}ms")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Instrumentation 长按失败", e)
+            false
+        }
+    }
+
+    /**
+     * 使用 Instrumentation 进行双击
+     */
+    private fun doubleClickAtWithInstrumentation(x: Float, y: Float): Boolean {
+        return try {
+            val firstClick = clickAtWithInstrumentation(x, y)
+            if (!firstClick) {
+                Log.e(TAG, "双击的第一次 Instrumentation 点击失败")
+                return false
+            }
+
+            Thread.sleep(100) // 双击间隔
+
+            val secondClick = clickAtWithInstrumentation(x, y)
+            if (!secondClick) {
+                Log.e(TAG, "双击的第二次 Instrumentation 点击失败")
+                return false
+            }
+
+            Log.d(TAG, "使用 Instrumentation 双击成功: ($x, $y)")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Instrumentation 双击失败", e)
+            false
+        }
+    }
+
+    /**
+     * 使用 Binder 服务进行点击
+     */
+    private fun clickAtWithBinderService(x: Float, y: Float): Boolean {
+        return try {
+            val service = instrumentationService ?: return false
+            service.click(x, y)
+        } catch (e: Exception) {
+            Log.e(TAG, "Binder服务点击失败", e)
+            false
+        }
+    }
+
+    /**
+     * 使用 Binder 服务进行拖拽
+     */
+    private fun dragFromToWithBinderService(
+        startX: Float, 
+        startY: Float, 
+        endX: Float, 
+        endY: Float, 
+        duration: Long = 500
+    ): Boolean {
+        return try {
+            val service = instrumentationService ?: return false
+            service.drag(startX, startY, endX, endY, duration)
+        } catch (e: Exception) {
+            Log.e(TAG, "Binder服务拖拽失败", e)
+            false
+        }
+    }
+
+    /**
+     * 使用 Binder 服务进行长按
+     */
+    private fun longClickAtWithBinderService(x: Float, y: Float, duration: Long = 1000): Boolean {
+        return try {
+            val service = instrumentationService ?: return false
+            service.longClick(x, y, duration)
+        } catch (e: Exception) {
+            Log.e(TAG, "Binder服务长按失败", e)
+            false
+        }
+    }
+
+    /**
+     * 使用 Binder 服务进行双击
+     */
+    private fun doubleClickAtWithBinderService(x: Float, y: Float): Boolean {
+        return try {
+            val service = instrumentationService ?: return false
+            service.doubleClick(x, y)
+        } catch (e: Exception) {
+            Log.e(TAG, "Binder服务双击失败", e)
+            false
+        }
+    }
+
+    /**
+     * 滑块操作 - 使用Binder服务
+     */
+    fun slideSeekBar(startX: Float, startY: Float, endX: Float, endY: Float, steps: Int = 20): Boolean {
+        return try {
+            val service = instrumentationService ?: return false
+            service.slideSeekBar(startX, startY, endX, endY, steps)
+        } catch (e: Exception) {
+            Log.e(TAG, "Binder服务滑块操作失败", e)
+            false
+        }
+    }
+
+    /**
+     * 文本输入 - 使用Binder服务
+     */
+    fun inputText(text: String): Boolean {
+        return try {
+            val service = instrumentationService ?: return false
+            service.inputText(text)
+        } catch (e: Exception) {
+            Log.e(TAG, "Binder服务文本输入失败", e)
+            false
+        }
+    }
+
+    /**
+     * 按键事件 - 使用Binder服务
+     */
+    fun sendKeyEvent(keyCode: Int): Boolean {
+        return try {
+            val service = instrumentationService ?: return false
+            service.sendKeyEvent(keyCode)
+        } catch (e: Exception) {
+            Log.e(TAG, "Binder服务按键事件失败", e)
+            false
+        }
     }
 
     /**
@@ -268,10 +715,57 @@ class XyzAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 点击指定坐标 - 使用 dispatchGesture 方式
+     * 点击指定坐标 - 优先使用 Binder 服务，失败时回退到其他方法
      */
     fun clickAt(x: Float, y: Float): Boolean {
+        // 优先使用 Binder 服务
+        if (isShizukuAvailable && isShizukuPermissionGranted && instrumentationService != null) {
+            val result = clickAtWithBinderService(x, y)
+            if (result) {
+                return true
+            }
+            Log.d(TAG, "Binder服务点击失败，回退到Shell命令")
+        }
+
+        // 回退到 Shizuku Shell 命令
+        if (isShizukuAvailable && isShizukuPermissionGranted) {
+            val result = clickAtWithShizukuShell(x, y)
+            if (result) {
+                return true
+            }
+            Log.d(TAG, "Shizuku Shell 点击失败，回退到 dispatchGesture")
+        }
+
+        // 最后回退到 dispatchGesture
         return clickAtWithGesture(x, y)
+    }
+
+    /**
+     * 使用 Shizuku Shell 命令进行点击
+     */
+    private fun clickAtWithShizukuShell(x: Float, y: Float): Boolean {
+        return try {
+            if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
+                return false
+            }
+
+            val command = "input tap ${x.toInt()} ${y.toInt()}"
+            val process = Runtime.getRuntime().exec(command)
+
+            val exitCode = process.waitFor()
+            val success = exitCode == 0
+
+            if (success) {
+                Log.d(TAG, "使用 Shell 点击成功: ($x, $y)")
+            } else {
+                Log.e(TAG, "Shell 点击失败，退出码: $exitCode")
+            }
+
+            success
+        } catch (e: Exception) {
+            Log.e(TAG, "Shell 点击异常", e)
+            false
+        }
     }
 
     /**
@@ -296,9 +790,28 @@ class XyzAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 拖拽操作 - 使用 dispatchGesture 方式
+     * 拖拽操作 - 优先使用 Binder 服务，失败时回退到其他方法
      */
     fun dragFromTo(startX: Float, startY: Float, endX: Float, endY: Float, duration: Long = 500): Boolean {
+        // 优先使用 Binder 服务
+        if (isShizukuAvailable && isShizukuPermissionGranted && instrumentationService != null) {
+            val result = dragFromToWithBinderService(startX, startY, endX, endY, duration)
+            if (result) {
+                return true
+            }
+            Log.d(TAG, "Binder服务拖拽失败，回退到Instrumentation")
+        }
+
+        // 回退到 Instrumentation
+        if (isShizukuAvailable && isShizukuPermissionGranted && instrumentation != null) {
+            val result = dragFromToWithInstrumentation(startX, startY, endX, endY, duration)
+            if (result) {
+                return true
+            }
+            Log.d(TAG, "Instrumentation 拖拽失败，回退到 dispatchGesture")
+        }
+
+        // 最后回退到 dispatchGesture
         return dragFromToWithGesture(startX, startY, endX, endY, duration)
     }
 
@@ -338,9 +851,28 @@ class XyzAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 长按操作 - 使用 dispatchGesture 方式
+     * 长按操作 - 优先使用 Binder 服务，失败时回退到其他方法
      */
     fun longClickAt(x: Float, y: Float, duration: Long = 1000): Boolean {
+        // 优先使用 Binder 服务
+        if (isShizukuAvailable && isShizukuPermissionGranted && instrumentationService != null) {
+            val result = longClickAtWithBinderService(x, y, duration)
+            if (result) {
+                return true
+            }
+            Log.d(TAG, "Binder服务长按失败，回退到Instrumentation")
+        }
+
+        // 回退到 Instrumentation
+        if (isShizukuAvailable && isShizukuPermissionGranted && instrumentation != null) {
+            val result = longClickAtWithInstrumentation(x, y, duration)
+            if (result) {
+                return true
+            }
+            Log.d(TAG, "Instrumentation 长按失败，回退到 dispatchGesture")
+        }
+
+        // 最后回退到 dispatchGesture
         return longClickAtWithGesture(x, y, duration)
     }
 
@@ -366,9 +898,28 @@ class XyzAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 双击操作 - 使用 dispatchGesture 方式
+     * 双击操作 - 优先使用 Binder 服务，失败时回退到其他方法
      */
     fun doubleClickAt(x: Float, y: Float): Boolean {
+        // 优先使用 Binder 服务
+        if (isShizukuAvailable && isShizukuPermissionGranted && instrumentationService != null) {
+            val result = doubleClickAtWithBinderService(x, y)
+            if (result) {
+                return true
+            }
+            Log.d(TAG, "Binder服务双击失败，回退到Instrumentation")
+        }
+
+        // 回退到 Instrumentation
+        if (isShizukuAvailable && isShizukuPermissionGranted && instrumentation != null) {
+            val result = doubleClickAtWithInstrumentation(x, y)
+            if (result) {
+                return true
+            }
+            Log.d(TAG, "Instrumentation 双击失败，回退到 dispatchGesture")
+        }
+
+        // 最后回退到 dispatchGesture
         return doubleClickAtWithGesture(x, y)
     }
 
