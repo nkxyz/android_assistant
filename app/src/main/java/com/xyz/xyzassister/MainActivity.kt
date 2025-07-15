@@ -73,10 +73,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         startButton.setOnClickListener {
-            if (isAccessibilityServiceEnabled()) {
+            if (isAnyAccessibilityServiceAvailable()) {
                 startFloatingService()
             } else {
-                Toast.makeText(this, "请先启用无障碍服务", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "请先启用无障碍服务或确保Shizuku服务正常运行", Toast.LENGTH_SHORT).show()
             }
         }
 
@@ -86,10 +86,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateStatus() {
-        val isEnabled = isAccessibilityServiceEnabled()
-        statusText.text = if (isEnabled) "无障碍服务已启用" else "无障碍服务未启用"
-        enableButton.isEnabled = !isEnabled
-        startButton.isEnabled = isEnabled
+        val isTraditionalEnabled = isAccessibilityServiceEnabled()
+        val isShizukuEnabled = isShizukuAccessibilityServiceAvailable()
+        val isAnyEnabled = isTraditionalEnabled || isShizukuEnabled
+
+        // 更新状态文本，显示具体的服务状态
+        statusText.text = when {
+            isTraditionalEnabled && isShizukuEnabled -> "无障碍服务已启用 (传统服务 + Shizuku系统服务)"
+            isTraditionalEnabled -> "无障碍服务已启用 (传统服务)"
+            isShizukuEnabled -> "无障碍服务已启用 (Shizuku系统服务)"
+            else -> "无障碍服务未启用"
+        }
+
+        // 如果Shizuku系统服务可用，则不需要启用传统无障碍服务
+        enableButton.isEnabled = !isTraditionalEnabled
+        startButton.isEnabled = isAnyEnabled
     }
 
     private fun isAccessibilityServiceEnabled(): Boolean {
@@ -104,8 +115,31 @@ class MainActivity : AppCompatActivity() {
         return false
     }
 
+    /**
+     * 检查Shizuku系统级AccessibilityService是否可用
+     */
+    private fun isShizukuAccessibilityServiceAvailable(): Boolean {
+        return try {
+            val accessibilityService = XyzAccessibilityService.getInstance()
+            accessibilityService?.isSystemAccessibilityServiceAvailable() == true
+        } catch (e: Exception) {
+            Log.e("MainActivity", "检查Shizuku AccessibilityService失败", e)
+            false
+        }
+    }
+
+    /**
+     * 检查是否有可用的无障碍服务（传统服务或Shizuku服务）
+     */
+    private fun isAnyAccessibilityServiceAvailable(): Boolean {
+        return isAccessibilityServiceEnabled() || isShizukuAccessibilityServiceAvailable()
+    }
+
     private fun openAccessibilitySettings() {
         try {
+            // 检查Shizuku服务状态，提供更准确的指导
+            val isShizukuAvailable = isShizukuAccessibilityServiceAvailable()
+
             // 方法1：直接跳转到本应用的无障碍服务设置页面
             val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
@@ -118,8 +152,13 @@ class MainActivity : AppCompatActivity() {
 
             startActivity(intent)
 
-            // 显示更详细的指导信息
-            Toast.makeText(this, "请在无障碍设置中找到并启用 'XYZ无障碍助手' 服务", Toast.LENGTH_LONG).show()
+            // 根据Shizuku服务状态显示不同的指导信息
+            val message = if (isShizukuAvailable) {
+                "Shizuku系统服务已可用，传统无障碍服务为可选项。如需启用传统服务，请在设置中找到 'XYZ无障碍助手'"
+            } else {
+                "请在无障碍设置中找到并启用 'XYZ无障碍助手' 服务，或确保Shizuku服务正常运行"
+            }
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 
         } catch (e: Exception) {
             // 如果上述方法失败，回退到通用的无障碍设置页面
@@ -127,7 +166,14 @@ class MainActivity : AppCompatActivity() {
             val fallbackIntent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
             fallbackIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             startActivity(fallbackIntent)
-            Toast.makeText(this, "请在设置中找到并启用本应用的无障碍服务", Toast.LENGTH_LONG).show()
+
+            val isShizukuAvailable = isShizukuAccessibilityServiceAvailable()
+            val message = if (isShizukuAvailable) {
+                "Shizuku系统服务已可用，传统无障碍服务为可选项"
+            } else {
+                "请在设置中找到并启用本应用的无障碍服务，或确保Shizuku服务正常运行"
+            }
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
         }
     }
 

@@ -76,44 +76,32 @@ class InstrumentationService : IInstrumentationService.Stub() {
         }
     }
 
-    @RequiresApi(Build.VERSION_CODES.Q)
     override fun click(x: Float, y: Float): Boolean {
         Log.i(TAG, "[Binder调用] click() 开始执行 - 坐标: ($x, $y)")
         val startTime = SystemClock.uptimeMillis()
 
         return try {
             val downTime = SystemClock.uptimeMillis()
-            val pointerProperties = MotionEvent.PointerProperties()
-            pointerProperties.id = 0
-            pointerProperties.toolType = MotionEvent.TOOL_TYPE_FINGER
-            val pointerCoords = MotionEvent.PointerCoords()
-            pointerCoords.x = x
-            pointerCoords.y = y
-            pointerCoords.pressure = 1.0f
-            pointerCoords.size = 1.0f
-            val pointerPropertiesArray = arrayOf(pointerProperties)
-            val pointerCoordsArray = arrayOf(pointerCoords)
-
             // 创建 ACTION_DOWN 事件 - 匹配真实点击参数
-            val source = InputDevice.SOURCE_TOUCHSCREEN
             val downEvent = MotionEvent.obtain(
                 downTime,                           // downTime
                 downTime,                           // eventTime
                 MotionEvent.ACTION_DOWN,            // action
-                1, // pointerCount
-                pointerPropertiesArray,            // pointerProperties
-                pointerCoordsArray,                 // pointerCoords
-                0,                                  // metaState
-                0,
-                1.0f,
-                1.0f,
-                -1,
-                0,
-                source,
+                1,
+                arrayOf(MotionEvent.PointerProperties().apply {
+                    id = 0
+                    toolType = MotionEvent.TOOL_TYPE_FINGER
+                }),
+                arrayOf(MotionEvent.PointerCoords().apply {
+                    this.x = x
+                    this.y = y
+                    pressure = 1.0f
+                    size = 1.0f
+                }),
+                0, 0, 1.0f, 1.0f,
+                -1, 0, InputDevice.SOURCE_TOUCHSCREEN,
                 MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED
             )
-
-            downEvent.source = source
 
             val downSuccess = injectInputEvent(downEvent)
 
@@ -126,16 +114,19 @@ class InstrumentationService : IInstrumentationService.Stub() {
                 downTime,                           // downTime
                 upEventTime,                           // eventTime
                 MotionEvent.ACTION_UP,            // action
-                pointerPropertiesArray.size, // pointerCount
-                pointerPropertiesArray,            // pointerProperties
-                pointerCoordsArray,                 // pointerCoords
-                0,                                  // metaState
-                0,
-                1.0f,
-                1.0f,
-                -1,
-                0,
-                source,
+                1,
+                arrayOf(MotionEvent.PointerProperties().apply {
+                    id = 0
+                    toolType = MotionEvent.TOOL_TYPE_FINGER
+                }),
+                arrayOf(MotionEvent.PointerCoords().apply {
+                    this.x = x
+                    this.y = y
+                    pressure = 1.0f
+                    size = 1.0f
+                }),
+                0, 0, 1.0f, 1.0f,
+                -1, 0, InputDevice.SOURCE_TOUCHSCREEN,
                 MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED
             )
 
@@ -168,56 +159,59 @@ class InstrumentationService : IInstrumentationService.Stub() {
         val startTime = SystemClock.uptimeMillis()
 
         return try {
-            val downTime = SystemClock.uptimeMillis()
-
             // 创建 ACTION_DOWN 事件 - 匹配真实点击参数
+            val downTime = SystemClock.uptimeMillis()
             val downEvent = MotionEvent.obtain(
-                downTime,                           // downTime
-                downTime,                           // eventTime
-                MotionEvent.ACTION_DOWN,            // action
-                x,                                  // x
-                y,                                  // y
-                1.0f,                              // pressure (按下时为1.0)
-                1.0f,                              // size
-                0,                                 // metaState
-                1.0f,                              // xPrecision
-                1.0f,                              // yPrecision
-                -1,                                // deviceId (-1匹配真实点击)
-                0                                  // edgeFlags
+                downTime,
+                downTime,
+                MotionEvent.ACTION_DOWN,
+                1,
+                arrayOf(MotionEvent.PointerProperties().apply {
+                    id = 0
+                    toolType = MotionEvent.TOOL_TYPE_FINGER
+                }),
+                arrayOf(MotionEvent.PointerCoords().apply {
+                    this.x = x
+                    this.y = y
+                    pressure = 1.0f
+                    size = 1.0f
+                }),
+                0, 0, 1.0f, 1.0f,
+                -1, 0, InputDevice.SOURCE_TOUCHSCREEN,
+                MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED
             )
 
             val downSuccess = injectInputEvent(downEvent)
-            downEvent.recycle()
 
-            if (!downSuccess) {
-                Log.e(TAG, "[Binder调用] longClick() ACTION_DOWN 事件注入失败")
-                return false
-            }
-
-            // 等待指定时间
+            // 模拟真实点击的时间间隔 (约289ms根据日志)
             Thread.sleep(duration)
 
             // 创建 ACTION_UP 事件 - 匹配真实点击参数
-            val upEventTime = downTime + duration
+            val upEventTime = SystemClock.uptimeMillis()
             val upEvent = MotionEvent.obtain(
-                downTime,                           // downTime (与DOWN事件相同)
-                upEventTime,                        // eventTime (DOWN时间 + 持续时间)
-                MotionEvent.ACTION_UP,              // action
-                x,                                  // x (相同坐标)
-                y,                                  // y (相同坐标)
-                0.0f,                              // pressure (抬起时为0.0)
-                1.0f,                              // size
-                0,                                 // metaState
-                1.0f,                              // xPrecision
-                1.0f,                              // yPrecision
-                -1,                                // deviceId (-1匹配真实点击)
-                0                                  // edgeFlags
+                downTime,
+                downTime,
+                MotionEvent.ACTION_UP,
+                1,
+                arrayOf(MotionEvent.PointerProperties().apply {
+                    id = 0
+                    toolType = MotionEvent.TOOL_TYPE_FINGER
+                }),
+                arrayOf(MotionEvent.PointerCoords().apply {
+                    this.x = x
+                    this.y = y
+                    pressure = 1.0f
+                    size = 1.0f
+                }),
+                0, 0, 1.0f, 1.0f,
+                -1, 0, InputDevice.SOURCE_TOUCHSCREEN,
+                MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED
             )
 
             val upSuccess = injectInputEvent(upEvent)
             upEvent.recycle()
 
-            val success = upSuccess
+            val success = upSuccess && downSuccess
             val totalDuration = SystemClock.uptimeMillis() - startTime
             if (success) {
                 Log.i(TAG, "[Binder调用] longClick() 执行成功 - 坐标: ($x, $y), 长按时间: ${duration}ms, 总耗时: ${totalDuration}ms")
@@ -243,20 +237,27 @@ class InstrumentationService : IInstrumentationService.Stub() {
 
             Log.i(TAG, "[Binder调用] drag() 计算步数: $steps 步")
 
-            // 创建 ACTION_DOWN 事件 - 匹配真实点击参数
+            val source = InputDevice.SOURCE_TOUCHSCREEN
+
+            // 替换所有 MotionEvent.obtain 调用
             val downEvent = MotionEvent.obtain(
-                downTime,                           // downTime
-                downTime,                           // eventTime
-                MotionEvent.ACTION_DOWN,            // action
-                startX,                             // x
-                startY,                             // y
-                1.0f,                              // pressure (按下时为1.0)
-                1.0f,                              // size
-                0,                                 // metaState
-                1.0f,                              // xPrecision
-                1.0f,                              // yPrecision
-                -1,                                // deviceId (-1匹配真实点击)
-                0                                  // edgeFlags
+                downTime,
+                downTime,
+                MotionEvent.ACTION_DOWN,
+                1,
+                arrayOf(MotionEvent.PointerProperties().apply {
+                    id = 0
+                    toolType = MotionEvent.TOOL_TYPE_FINGER
+                }),
+                arrayOf(MotionEvent.PointerCoords().apply {
+                    this.x = startX
+                    this.y = startY
+                    pressure = 1.0f
+                    size = 1.0f
+                }),
+                0, 0, 1.0f, 1.0f,
+                -1, 0, source,
+                MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED
             )
             val downSuccess = injectInputEvent(downEvent)
             downEvent.recycle()
@@ -271,21 +272,26 @@ class InstrumentationService : IInstrumentationService.Stub() {
                 val progress = i.toFloat() / steps
                 val currentX = startX + (endX - startX) * progress
                 val currentY = startY + (endY - startY) * progress
-                val eventTime = downTime + (duration * progress).toLong()
 
+                val moveTime = SystemClock.uptimeMillis()
                 val moveEvent = MotionEvent.obtain(
-                    downTime,                           // downTime (与DOWN事件相同)
-                    eventTime,                          // eventTime (递增)
-                    MotionEvent.ACTION_MOVE,            // action
-                    currentX,                           // x (当前位置)
-                    currentY,                           // y (当前位置)
-                    1.0f,                              // pressure (移动时保持1.0)
-                    1.0f,                              // size
-                    0,                                 // metaState
-                    1.0f,                              // xPrecision
-                    1.0f,                              // yPrecision
-                    -1,                                // deviceId (-1匹配真实点击)
-                    0                                  // edgeFlags
+                    downTime,
+                    moveTime,
+                    MotionEvent.ACTION_MOVE,
+                    1,
+                    arrayOf(MotionEvent.PointerProperties().apply {
+                        id = 0
+                        toolType = MotionEvent.TOOL_TYPE_FINGER
+                    }),
+                    arrayOf(MotionEvent.PointerCoords().apply {
+                        this.x = currentX
+                        this.y = currentY
+                        pressure = 1.0f
+                        size = 1.0f
+                    }),
+                    0, 0, 1.0f, 1.0f,
+                    -1, 0, InputDevice.SOURCE_TOUCHSCREEN,
+                    MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED
                 )
                 val moveSuccess = injectInputEvent(moveEvent)
                 moveEvent.recycle()
@@ -298,20 +304,26 @@ class InstrumentationService : IInstrumentationService.Stub() {
             }
 
             // 创建 ACTION_UP 事件 - 匹配真实点击参数
-            val upEventTime = downTime + duration
+            Thread.sleep(duration)
+            val upEventTime = SystemClock.uptimeMillis()
             val upEvent = MotionEvent.obtain(
-                downTime,                           // downTime (与DOWN事件相同)
-                upEventTime,                        // eventTime (DOWN时间 + 持续时间)
-                MotionEvent.ACTION_UP,              // action
-                endX,                               // x (终点坐标)
-                endY,                               // y (终点坐标)
-                0.0f,                              // pressure (抬起时为0.0)
-                1.0f,                              // size
-                0,                                 // metaState
-                1.0f,                              // xPrecision
-                1.0f,                              // yPrecision
-                -1,                                // deviceId (-1匹配真实点击)
-                0                                  // edgeFlags
+                downTime,
+                upEventTime,
+                MotionEvent.ACTION_UP,
+                1,
+                arrayOf(MotionEvent.PointerProperties().apply {
+                    id = 0
+                    toolType = MotionEvent.TOOL_TYPE_FINGER
+                }),
+                arrayOf(MotionEvent.PointerCoords().apply {
+                    this.x = endX
+                    this.y = endY
+                    pressure = 1.0f
+                    size = 1.0f
+                }),
+                0, 0, 1.0f, 1.0f,
+                -1, 0, InputDevice.SOURCE_TOUCHSCREEN,
+                MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED
             )
             val upSuccess = injectInputEvent(upEvent)
             upEvent.recycle()
@@ -375,18 +387,23 @@ class InstrumentationService : IInstrumentationService.Stub() {
 
             // 创建 ACTION_DOWN 事件 - 匹配真实点击参数
             val downEvent = MotionEvent.obtain(
-                downTime,                           // downTime
-                downTime,                           // eventTime
-                MotionEvent.ACTION_DOWN,            // action
-                startX,                             // x
-                startY,                             // y
-                1.0f,                              // pressure (按下时为1.0)
-                1.0f,                              // size
-                0,                                 // metaState
-                1.0f,                              // xPrecision
-                1.0f,                              // yPrecision
-                -1,                                // deviceId (-1匹配真实点击)
-                0                                  // edgeFlags
+                downTime,
+                SystemClock.uptimeMillis(),
+                MotionEvent.ACTION_DOWN,
+                1,
+                arrayOf(MotionEvent.PointerProperties().apply {
+                    id = 0
+                    toolType = MotionEvent.TOOL_TYPE_FINGER
+                }),
+                arrayOf(MotionEvent.PointerCoords().apply {
+                    x = endX
+                    y = endY
+                    pressure = 1.0f
+                    size = 1.0f
+                }),
+                0, 0, 1.0f, 1.0f,
+                -1, 0, InputDevice.SOURCE_TOUCHSCREEN,
+                MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED
             )
             val downSuccess = injectInputEvent(downEvent)
             downEvent.recycle()
@@ -399,26 +416,57 @@ class InstrumentationService : IInstrumentationService.Stub() {
             // 短暂停顿确保按下被识别
             Thread.sleep(50)
 
+            val RANDOM_X_RANGE = 0.1f  // X轴随机量范围（屏幕宽度的10%）
+            val RANDOM_Y_RANGE = 0.05f // Y轴随机量范围（屏幕高度的5%）
+
             // 创建平滑的滑动事件 - 匹配真实点击参数
             for (i in 1 until actualSteps) {
-                val progress = i.toFloat() / actualSteps
-                val currentX = startX + (endX - startX) * progress
-                val currentY = startY + (endY - startY) * progress
-                val eventTime = downTime + (i * 20L) // 每步20ms
+
+
+                val baseProgress = i.toFloat() / actualSteps
+                // 生成随机因子（-0.1到0.1之间）
+                val randomFactor = (Math.random() * 0.2 - 0.1).toFloat()
+
+                // 带随机量的进度计算（最后一步保持准确）
+                val effectiveProgress = if (i == actualSteps - 1) 1.0f else
+                    baseProgress + randomFactor * 0.3f  // 限制随机幅度
+
+                // X轴基础位移 + 随机波动
+                val currentX = startX + (endX - startX) * effectiveProgress +
+                        (endX - startX) * (Math.random() * RANDOM_X_RANGE - RANDOM_X_RANGE/2).toFloat()
+
+                // Y轴基础位移 + 随机波动（模拟手指自然抖动）
+                val yOffset = (endY - startY) * 0.2f // 允许20%的垂直偏移
+                val currentY = startY + (endY - startY) * effectiveProgress +
+                        yOffset * (Math.random() * RANDOM_Y_RANGE - RANDOM_Y_RANGE/2).toFloat()
+
+                // 限制坐标不超出边界
+                val clampedX = currentX.coerceIn(startX.coerceAtMost(endX), startX.coerceAtLeast(endX))
+                val clampedY = currentY.coerceIn(startY.coerceAtMost(endY), startY.coerceAtLeast(endY))
+
+
+//                val progress = i.toFloat() / actualSteps
+//                val currentX = startX + (endX - startX) * progress
+//                val currentY = startY + (endY - startY) * progress
 
                 val moveEvent = MotionEvent.obtain(
-                    downTime,                           // downTime (与DOWN事件相同)
-                    eventTime,                          // eventTime (递增)
-                    MotionEvent.ACTION_MOVE,            // action
-                    currentX,                           // x (当前位置)
-                    currentY,                           // y (当前位置)
-                    1.0f,                              // pressure (移动时保持1.0)
-                    1.0f,                              // size
-                    0,                                 // metaState
-                    1.0f,                              // xPrecision
-                    1.0f,                              // yPrecision
-                    -1,                                // deviceId (-1匹配真实点击)
-                    0                                  // edgeFlags
+                    downTime,
+                    SystemClock.uptimeMillis(),
+                    MotionEvent.ACTION_MOVE,
+                    1,
+                    arrayOf(MotionEvent.PointerProperties().apply {
+                        id = 0
+                        toolType = MotionEvent.TOOL_TYPE_FINGER
+                    }),
+                    arrayOf(MotionEvent.PointerCoords().apply {
+                        x = clampedX
+                        y = clampedY
+                        pressure = 1.0f
+                        size = 1.0f
+                    }),
+                    0, 0, 1.0f, 1.0f,
+                    -1, 0, InputDevice.SOURCE_TOUCHSCREEN,
+                    MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED
                 )
                 val moveSuccess = injectInputEvent(moveEvent)
                 moveEvent.recycle()
@@ -431,20 +479,24 @@ class InstrumentationService : IInstrumentationService.Stub() {
             }
 
             // 创建 ACTION_UP 事件 - 匹配真实点击参数
-            val upEventTime = downTime + (actualSteps * 20L)
             val upEvent = MotionEvent.obtain(
-                downTime,                           // downTime (与DOWN事件相同)
-                upEventTime,                        // eventTime (DOWN时间 + 总持续时间)
-                MotionEvent.ACTION_UP,              // action
-                endX,                               // x (终点坐标)
-                endY,                               // y (终点坐标)
-                0.0f,                              // pressure (抬起时为0.0)
-                1.0f,                              // size
-                0,                                 // metaState
-                1.0f,                              // xPrecision
-                1.0f,                              // yPrecision
-                -1,                                // deviceId (-1匹配真实点击)
-                0                                  // edgeFlags
+                downTime,
+                SystemClock.uptimeMillis(),
+                MotionEvent.ACTION_UP,
+                1,
+                arrayOf(MotionEvent.PointerProperties().apply {
+                    id = 0
+                    toolType = MotionEvent.TOOL_TYPE_FINGER
+                }),
+                arrayOf(MotionEvent.PointerCoords().apply {
+                    x = endX
+                    y = endY
+                    pressure = 1.0f
+                    size = 1.0f
+                }),
+                0, 0, 1.0f, 1.0f,
+                -1, 0, InputDevice.SOURCE_TOUCHSCREEN,
+                MotionEvent.FLAG_WINDOW_IS_PARTIALLY_OBSCURED
             )
             val upSuccess = injectInputEvent(upEvent)
             upEvent.recycle()

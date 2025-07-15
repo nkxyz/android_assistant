@@ -9,7 +9,7 @@ android {
 
     defaultConfig {
         applicationId = "com.xyz.xyzassister"
-        minSdk = 26
+        minSdk = 29
         targetSdk = 30
         versionCode = 1
         versionName = "1.0"
@@ -38,6 +38,7 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+
     }
     kotlinOptions {
         jvmTarget = "11"

@@ -64,8 +64,11 @@ class XyzAccessibilityService : AccessibilityService() {
 
     // Binder 服务相关字段
     private var instrumentationService: IInstrumentationService? = null
+    private var systemAccessibilityService: IAccessibilityService? = null
     private var serviceConnection: ServiceConnection? = null
+    private var accessibilityServiceConnection: ServiceConnection? = null
     private var userServiceArgs: Shizuku.UserServiceArgs? = null
+    private var accessibilityUserServiceArgs: Shizuku.UserServiceArgs? = null
 
     // Shizuku 事件监听器
     private val shizukuPermissionResultListener = Shizuku.OnRequestPermissionResultListener { requestCode, grantResult ->
@@ -73,6 +76,7 @@ class XyzAccessibilityService : AccessibilityService() {
         isShizukuPermissionGranted = grantResult == android.content.pm.PackageManager.PERMISSION_GRANTED
         if (isShizukuPermissionGranted) {
             initializeInstrumentation()
+            bindSystemAccessibilityService()
         }
     }
 
@@ -261,6 +265,7 @@ class XyzAccessibilityService : AccessibilityService() {
         try {
             // 使用 bindUserService 创建系统级服务
             bindInstrumentationService()
+            bindSystemAccessibilityService()
 
             // 通过 Shizuku 获取系统权限创建 Instrumentation
             instrumentation = Instrumentation()
@@ -269,6 +274,7 @@ class XyzAccessibilityService : AccessibilityService() {
             Log.e(TAG, "初始化 bindUserService 失败", e)
             instrumentation = null
             instrumentationService = null
+            systemAccessibilityService = null
         }
     }
 
@@ -322,6 +328,73 @@ class XyzAccessibilityService : AccessibilityService() {
     }
 
     /**
+     * 绑定系统级AccessibilityService服务
+     */
+    private fun bindSystemAccessibilityService() {
+        try {
+            if (Shizuku.checkSelfPermission() != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                Log.e(TAG, "Shizuku权限未授予，无法绑定AccessibilityService")
+                return
+            }
+
+            val serviceArgs = Shizuku.UserServiceArgs(
+                ComponentName(packageName, SystemAccessibilityService::class.java.name)
+            )
+            .daemon(false)
+            .processNameSuffix("accessibility")
+            .debuggable(true)
+            .version(1)
+
+            accessibilityUserServiceArgs = serviceArgs
+
+            val connection = object : ServiceConnection {
+                override fun onServiceConnected(componentName: ComponentName, binder: IBinder) {
+                    Log.d(TAG, "SystemAccessibilityService 连接成功")
+                    systemAccessibilityService = IAccessibilityService.Stub.asInterface(binder)
+
+                    // 测试服务是否可用
+                    try {
+                        val isAvailable = systemAccessibilityService?.isServiceAvailable() ?: false
+                        Log.d(TAG, "SystemAccessibilityService 可用性: $isAvailable")
+                    } catch (e: Exception) {
+                        Log.e(TAG, "测试SystemAccessibilityService失败", e)
+                    }
+                }
+
+                override fun onServiceDisconnected(componentName: ComponentName) {
+                    Log.d(TAG, "SystemAccessibilityService 连接断开")
+                    systemAccessibilityService = null
+                }
+            }
+
+            accessibilityServiceConnection = connection
+            Shizuku.bindUserService(serviceArgs, connection)
+
+        } catch (e: Exception) {
+            Log.e(TAG, "绑定SystemAccessibilityService失败", e)
+            systemAccessibilityService = null
+        }
+    }
+
+    /**
+     * 解绑AccessibilityService服务
+     */
+    private fun unbindSystemAccessibilityService() {
+        try {
+            systemAccessibilityService?.destroy()
+            if (accessibilityUserServiceArgs != null && accessibilityServiceConnection != null) {
+                Shizuku.unbindUserService(accessibilityUserServiceArgs!!, accessibilityServiceConnection!!, true)
+            }
+            systemAccessibilityService = null
+            accessibilityServiceConnection = null
+            accessibilityUserServiceArgs = null
+            Log.d(TAG, "SystemAccessibilityService 解绑完成")
+        } catch (e: Exception) {
+            Log.e(TAG, "解绑SystemAccessibilityService失败", e)
+        }
+    }
+
+    /**
      * 解绑服务
      */
     private fun unbindInstrumentationService() {
@@ -346,6 +419,8 @@ class XyzAccessibilityService : AccessibilityService() {
         try {
             // 解绑Instrumentation服务
             unbindInstrumentationService()
+            // 解绑AccessibilityService服务
+            unbindSystemAccessibilityService()
 
             Shizuku.removeRequestPermissionResultListener(shizukuPermissionResultListener)
             Shizuku.removeBinderReceivedListener(shizukuBinderReceivedListener)
@@ -374,8 +449,12 @@ class XyzAccessibilityService : AccessibilityService() {
             try {
                 // 确保所有用户服务都被正确解绑
                 if (userServiceArgs != null && serviceConnection != null) {
-                    Log.i(TAG, "强制解绑用户服务")
+                    Log.i(TAG, "强制解绑InstrumentationService用户服务")
                     Shizuku.unbindUserService(userServiceArgs!!, serviceConnection!!, true)
+                }
+                if (accessibilityUserServiceArgs != null && accessibilityServiceConnection != null) {
+                    Log.i(TAG, "强制解绑SystemAccessibilityService用户服务")
+                    Shizuku.unbindUserService(accessibilityUserServiceArgs!!, accessibilityServiceConnection!!, true)
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "强制解绑用户服务时出现异常", e)
@@ -383,8 +462,11 @@ class XyzAccessibilityService : AccessibilityService() {
 
             // 重置所有相关状态
             instrumentationService = null
+            systemAccessibilityService = null
             serviceConnection = null
+            accessibilityServiceConnection = null
             userServiceArgs = null
+            accessibilityUserServiceArgs = null
             instrumentation = null
             isShizukuAvailable = false
             isShizukuPermissionGranted = false
@@ -640,6 +722,138 @@ class XyzAccessibilityService : AccessibilityService() {
             service.sendKeyEvent(keyCode)
         } catch (e: Exception) {
             Log.e(TAG, "Binder服务按键事件失败", e)
+            false
+        }
+    }
+
+    // ========== SystemAccessibilityService 便捷方法 ==========
+
+    /**
+     * 获取系统级根节点信息
+     */
+    fun getSystemRootNodeInfo(): String? {
+        return try {
+            val service = systemAccessibilityService ?: return null
+            service.getRootNodeInfo()
+        } catch (e: Exception) {
+            Log.e(TAG, "获取系统级根节点信息失败", e)
+            null
+        }
+    }
+
+    /**
+     * 使用系统权限根据ID查找节点
+     */
+    fun findSystemNodeById(id: String): String? {
+        return try {
+            val service = systemAccessibilityService ?: return null
+            service.findNodeById(id)
+        } catch (e: Exception) {
+            Log.e(TAG, "系统级根据ID查找节点失败", e)
+            null
+        }
+    }
+
+    /**
+     * 使用系统权限根据文本查找节点
+     */
+    fun findSystemNodeByText(text: String): String? {
+        return try {
+            val service = systemAccessibilityService ?: return null
+            service.findNodeByText(text)
+        } catch (e: Exception) {
+            Log.e(TAG, "系统级根据文本查找节点失败", e)
+            null
+        }
+    }
+
+    /**
+     * 使用系统权限根据类名查找节点
+     */
+    fun findSystemNodeByClass(className: String): String? {
+        return try {
+            val service = systemAccessibilityService ?: return null
+            service.findNodeByClass(className)
+        } catch (e: Exception) {
+            Log.e(TAG, "系统级根据类名查找节点失败", e)
+            null
+        }
+    }
+
+    /**
+     * 使用系统权限点击指定ID的节点
+     */
+    fun clickSystemNodeById(id: String): Boolean {
+        return try {
+            val service = systemAccessibilityService ?: return false
+            service.clickNodeById(id)
+        } catch (e: Exception) {
+            Log.e(TAG, "系统级点击节点失败", e)
+            false
+        }
+    }
+
+    /**
+     * 使用系统权限点击指定文本的节点
+     */
+    fun clickSystemNodeByText(text: String): Boolean {
+        return try {
+            val service = systemAccessibilityService ?: return false
+            service.clickNodeByText(text)
+        } catch (e: Exception) {
+            Log.e(TAG, "系统级点击节点失败", e)
+            false
+        }
+    }
+
+    /**
+     * 获取系统级当前窗口信息
+     */
+    fun getSystemCurrentWindowInfo(): String? {
+        return try {
+            val service = systemAccessibilityService ?: return null
+            service.getCurrentWindowInfo()
+        } catch (e: Exception) {
+            Log.e(TAG, "获取系统级当前窗口信息失败", e)
+            null
+        }
+    }
+
+    /**
+     * 获取系统级当前应用包名
+     */
+    fun getSystemCurrentPackageName(): String? {
+        return try {
+            val service = systemAccessibilityService ?: return null
+            service.getCurrentPackageName()
+        } catch (e: Exception) {
+            Log.e(TAG, "获取系统级当前包名失败", e)
+            null
+        }
+    }
+
+    /**
+     * 执行系统级全局手势
+     */
+    fun performSystemGlobalAction(action: Int): Boolean {
+        return try {
+            val service = systemAccessibilityService ?: return false
+            service.performGlobalAction(action)
+        } catch (e: Exception) {
+            Log.e(TAG, "执行系统级全局手势失败", e)
+            false
+        }
+    }
+
+    /**
+     * 检查SystemAccessibilityService是否可用
+     */
+    fun isSystemAccessibilityServiceAvailable(): Boolean {
+        return try {
+            val service = systemAccessibilityService ?: return false
+            service.isServiceAvailable()
+        } catch (e: Exception) {
+            Log.e(TAG, "检查SystemAccessibilityService可用性失败", e)
             false
         }
     }
@@ -1564,12 +1778,18 @@ class XyzAccessibilityService : AccessibilityService() {
             val child = priceFlowLayout.getChild(i)
             if (child != null && child.isClickable) {
                 // 检查该控件的子控件中是否存在售罄标签
-                val hasSoldOutTag = checkForSoldOutTag(child)
+//                val hasSoldOutTag = checkForSoldOutTag(child)
+                val hasSoldOutTag = checkChildNodeIdsAndTexts(child,
+                    listOf(
+                        NodeSearchIdAndText("cn.damai:id/layout_tag", "缺货登记"),
+                        NodeSearchIdAndText("cn.damai:id/layout_tag", "可预约")
+                        )
+                )
                 if (!hasSoldOutTag) {
                     availablePriceOptions.add(child)
-                    Log.d(TAG, "找到可用价位: ${child.text}, ID: ${child.viewIdResourceName}")
+                    Log.d(TAG, "找到可用价位: ${child.rangeInfo}")
                 } else {
-                    Log.d(TAG, "价位已售罄: ${child.text}")
+                    Log.d(TAG, "价位已售罄: ${child.rangeInfo}")
                 }
             }
         }
@@ -1583,6 +1803,38 @@ class XyzAccessibilityService : AccessibilityService() {
      */
     private fun checkForSoldOutTag(node: AccessibilityNodeInfo): Boolean {
         return checkForSoldOutTagRecursive(node)
+    }
+
+    private fun checkChildNodeIdAndText(node: AccessibilityNodeInfo, id: String, text: String): Boolean {
+        Log.d(TAG, "枚举控件: ${node.viewIdResourceName}, ${node.text} ")
+        if (node.viewIdResourceName == id && node.text?.toString() == text) {
+            Log.d(TAG, "命中控件: ${node.viewIdResourceName}, ${node.text} ")
+            return true
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i)
+            if (child != null) {
+                if (checkChildNodeIdAndText(child, id, text)) {
+                    return true
+                }
+            }
+        }
+        return false
+    }
+
+    data class NodeSearchIdAndText(val id: String, val text: String) {
+        override fun toString(): String {
+            return "[$id, $text]"
+        }
+    }
+
+    private fun checkChildNodeIdsAndTexts(node: AccessibilityNodeInfo, targets: List<NodeSearchIdAndText>): Boolean {
+        for (target in targets) {
+            if (checkChildNodeIdAndText(node, target.id, target.text)) {
+                return true
+            }
+        }
+        return false
     }
 
     private fun checkForSoldOutTagRecursive(node: AccessibilityNodeInfo?): Boolean {
@@ -1852,7 +2104,7 @@ class XyzAccessibilityService : AccessibilityService() {
                     if (dateButtonIndex >= dateButtons.size) {
                         dateButtonIndex = 0
                     }
-                    val dateButton = dateButtons[dateButtonIndex]
+                    val dateButton = dateButtons[dateButtonIndex++]
                     Log.d(TAG, "点击日期按钮: ${dateButton.rangeInfo}")
                     if (!clickNode(dateButton)){
                         Log.d(TAG, "点击失败")
