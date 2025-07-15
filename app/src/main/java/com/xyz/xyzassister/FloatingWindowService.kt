@@ -47,7 +47,7 @@ class FloatingWindowService : Service() {
         super.onCreate()
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         createNotificationChannel()
-        Log.d(TAG, "悬浮窗服务创建")
+        Log.i(TAG, "悬浮窗服务创建")
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -65,11 +65,50 @@ class FloatingWindowService : Service() {
     override fun onDestroy() {
         super.onDestroy()
 
-        // 关闭后台线程池
-        backgroundExecutor.shutdown()
+        Log.i(TAG, "开始销毁悬浮窗服务...")
 
-        removeFloatingWindow()
-        Log.d(TAG, "悬浮窗服务销毁")
+        // 停止正在运行的辅助功能
+        try {
+            if (isAssistantActive) {
+                stopAssistant()
+                Log.i(TAG, "已停止辅助功能")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "停止辅助功能失败", e)
+        }
+
+        // 关闭后台线程池
+        try {
+            backgroundExecutor.shutdown()
+            // 等待线程池关闭，最多等待5秒
+            if (!backgroundExecutor.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
+                backgroundExecutor.shutdownNow()
+                Log.w(TAG, "强制关闭后台线程池")
+            }
+            Log.i(TAG, "后台线程池关闭完成")
+        } catch (e: Exception) {
+            Log.e(TAG, "关闭后台线程池失败", e)
+            backgroundExecutor.shutdownNow()
+        }
+
+        // 移除悬浮窗
+        try {
+            removeFloatingWindow()
+            Log.i(TAG, "悬浮窗移除完成")
+        } catch (e: Exception) {
+            Log.e(TAG, "移除悬浮窗失败", e)
+        }
+
+        // 重置状态变量
+        try {
+            isAssistantActive = false
+            isHidden = false
+            Log.i(TAG, "状态变量重置完成")
+        } catch (e: Exception) {
+            Log.e(TAG, "重置状态变量失败", e)
+        }
+
+        Log.i(TAG, "悬浮窗服务销毁完成")
     }
 
     private fun createNotificationChannel() {
@@ -239,7 +278,7 @@ class FloatingWindowService : Service() {
     private fun checkCurrentAppAndStartProcess() {
         backgroundExecutor.execute {
             try {
-                val accessibilityService = XyzAccessibilityService.instance
+                val accessibilityService = XyzAccessibilityService.getInstance()
                 if (accessibilityService == null) {
                     handler.post {
                         Toast.makeText(this@FloatingWindowService, "无障碍服务未连接，无法启动辅助功能", Toast.LENGTH_LONG).show()
@@ -253,24 +292,25 @@ class FloatingWindowService : Service() {
                 Log.d(TAG, "当前检测到的应用: $currentActivity")
 
                 handler.post {
-                    if (currentActivity?.contains("cn.damai") == true) {
-                        Log.d(TAG, "检测到大麦应用，开始执行抢票流程")
-                        Toast.makeText(this@FloatingWindowService, "检测到大麦应用，开始抢票流程...", Toast.LENGTH_SHORT).show()
+//                    if (currentActivity?.contains("cn.damai") == true) {
+//                        Log.d(TAG, "检测到大麦应用，开始执行抢票流程")
+//                        Toast.makeText(this@FloatingWindowService, "检测到大麦应用，开始抢票流程...", Toast.LENGTH_SHORT).show()
+//
+//
+//                    } else {
+//                        Log.d(TAG, "当前应用不是大麦应用: $currentActivity")
+//                        Toast.makeText(this@FloatingWindowService, "当前应用不是大麦应用，请打开大麦应用后重试", Toast.LENGTH_LONG).show()
+//
+//                        // 恢复悬浮窗显示
+//                        restoreFloatingWindow()
+//                    }
+                    // 标记辅助功能为激活状态
+                    isAssistantActive = true
+                    updateButtonStates()
 
-                        // 标记辅助功能为激活状态
-                        isAssistantActive = true
-                        updateButtonStates()
+                    // 在后台线程执行抢票流程
+                    startTicketGrabbingInBackground()
 
-                        // 在后台线程执行抢票流程
-                        startTicketGrabbingInBackground()
-
-                    } else {
-                        Log.d(TAG, "当前应用不是大麦应用: $currentActivity")
-                        Toast.makeText(this@FloatingWindowService, "当前应用不是大麦应用，请打开大麦应用后重试", Toast.LENGTH_LONG).show()
-
-                        // 恢复悬浮窗显示
-                        restoreFloatingWindow()
-                    }
                 }
 
             } catch (e: Exception) {
@@ -289,7 +329,7 @@ class FloatingWindowService : Service() {
     private fun startTicketGrabbingInBackground() {
         backgroundExecutor.execute {
             try {
-                val accessibilityService = XyzAccessibilityService.instance
+                val accessibilityService = XyzAccessibilityService.getInstance()
                 if (accessibilityService != null) {
                     Log.d(TAG, "开始执行抢票流程...")
 
@@ -297,7 +337,13 @@ class FloatingWindowService : Service() {
                     val success = accessibilityService.startTicketGrabbingProcess()
 
                     handler.post {
-                        if (success) {
+                        // 检查是否是用户主动停止
+                        val isStoppedByUser = !accessibilityService.isTicketGrabbingProcessActive()
+
+                        if (isStoppedByUser) {
+                            Toast.makeText(this@FloatingWindowService, "抢票流程已被用户停止", Toast.LENGTH_SHORT).show()
+                            Log.d(TAG, "抢票流程被用户停止")
+                        } else if (success) {
                             Toast.makeText(this@FloatingWindowService, "抢票流程执行成功！", Toast.LENGTH_LONG).show()
                             Log.d(TAG, "抢票流程执行成功")
                         } else {
@@ -359,10 +405,11 @@ class FloatingWindowService : Service() {
     private fun stopAssistant() {
         Log.d(TAG, "停止辅助功能")
 
-        // 停止后台任务
-        backgroundExecutor.execute {
-            // 这里可以添加停止抢票流程的逻辑
-            Log.d(TAG, "后台抢票任务已停止")
+        // 停止抢票流程
+        val accessibilityService = XyzAccessibilityService.getInstance()
+        if (accessibilityService != null) {
+            accessibilityService.stopTicketGrabbingProcess()
+            Log.d(TAG, "已发送停止抢票流程指令")
         }
 
         // 恢复悬浮窗显示
@@ -411,7 +458,7 @@ class FloatingWindowService : Service() {
     }
 
     private fun printScreenElements() {
-        val accessibilityService = XyzAccessibilityService.instance
+        val accessibilityService = XyzAccessibilityService.getInstance()
         if (accessibilityService != null) {
             // 打印当前窗口信息
             accessibilityService.printCurrentWindowInfo()

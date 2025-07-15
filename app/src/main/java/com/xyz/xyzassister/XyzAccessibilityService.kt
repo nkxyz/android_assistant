@@ -45,7 +45,12 @@ class XyzAccessibilityService : AccessibilityService() {
 
     companion object {
         private const val TAG = "XyzAccessibilityService"
-        var instance: XyzAccessibilityService? = null
+        private var instance: XyzAccessibilityService? = null
+
+        /**
+         * 获取无障碍服务实例
+         */
+        fun getInstance(): XyzAccessibilityService? = instance
     }
 
     private lateinit var windowManager: WindowManager
@@ -89,11 +94,15 @@ class XyzAccessibilityService : AccessibilityService() {
     private var currentClassName: String? = null
     private var currentActivityName: String? = null
 
+    // 控制抢票流程的标志
+    @Volatile
+    private var isTicketGrabbingActive = false
+
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
-        Log.d(TAG, "无障碍服务已连接")
+        Log.i(TAG, "无障碍服务已连接")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -154,12 +163,50 @@ class XyzAccessibilityService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+
+        Log.i(TAG, "开始销毁无障碍服务...")
+
+        // 停止所有正在运行的流程
+        try {
+            if (isTicketGrabbingActive) {
+                stopTicketGrabbingProcess()
+                Log.i(TAG, "已停止抢票流程")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "停止抢票流程失败", e)
+        }
+
         // 清除所有点击指示器
-        clearAllClickIndicators()
+        try {
+            clearAllClickIndicators()
+            Log.i(TAG, "点击指示器清理完成")
+        } catch (e: Exception) {
+            Log.e(TAG, "清理点击指示器失败", e)
+        }
+
         // 清理 Shizuku 资源
-        cleanupShizuku()
+        try {
+            cleanupShizuku()
+            Log.i(TAG, "Shizuku 资源清理完成")
+        } catch (e: Exception) {
+            Log.e(TAG, "清理 Shizuku 资源失败", e)
+        }
+
+        // 重置所有状态变量
+        try {
+            currentPackageName = null
+            currentClassName = null
+            currentActivityName = null
+            isTicketGrabbingActive = false
+            Log.i(TAG, "状态变量重置完成")
+        } catch (e: Exception) {
+            Log.e(TAG, "重置状态变量失败", e)
+        }
+
+        // 清理实例引用
         instance = null
-        Log.d(TAG, "无障碍服务已销毁")
+
+        Log.d(TAG, "无障碍服务销毁完成")
     }
 
     /**
@@ -309,6 +356,42 @@ class XyzAccessibilityService : AccessibilityService() {
             Log.d(TAG, "Shizuku 资源清理完成")
         } catch (e: Exception) {
             Log.e(TAG, "清理 Shizuku 资源失败", e)
+        }
+    }
+
+    /**
+     * 强制清理 Shizuku 资源 - 可从外部调用
+     * 用于应用程序终止时的资源清理
+     */
+    fun forceCleanupShizuku() {
+        try {
+            Log.i(TAG, "开始强制清理Shizuku资源...")
+
+            // 调用内部清理方法
+            cleanupShizuku()
+
+            // 额外的强制清理步骤
+            try {
+                // 确保所有用户服务都被正确解绑
+                if (userServiceArgs != null && serviceConnection != null) {
+                    Log.i(TAG, "强制解绑用户服务")
+                    Shizuku.unbindUserService(userServiceArgs!!, serviceConnection!!, true)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "强制解绑用户服务时出现异常", e)
+            }
+
+            // 重置所有相关状态
+            instrumentationService = null
+            serviceConnection = null
+            userServiceArgs = null
+            instrumentation = null
+            isShizukuAvailable = false
+            isShizukuPermissionGranted = false
+
+            Log.i(TAG, "强制清理Shizuku资源完成")
+        } catch (e: Exception) {
+            Log.e(TAG, "强制清理Shizuku资源失败", e)
         }
     }
 
@@ -1692,9 +1775,32 @@ class XyzAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 主要的抢票流程
+     * 开始抢票流程
      */
     fun startTicketGrabbingProcess(): Boolean {
+        isTicketGrabbingActive = true
+        return executeTicketGrabbingProcess()
+    }
+
+    /**
+     * 停止抢票流程
+     */
+    fun stopTicketGrabbingProcess() {
+        Log.d(TAG, "停止抢票流程")
+        isTicketGrabbingActive = false
+    }
+
+    /**
+     * 检查抢票流程是否正在运行
+     */
+    fun isTicketGrabbingProcessActive(): Boolean {
+        return isTicketGrabbingActive
+    }
+
+    /**
+     * 主要的抢票流程执行逻辑
+     */
+    private fun executeTicketGrabbingProcess(): Boolean {
         Log.d(TAG, "========== 开始抢票流程 ==========")
 
         // 1. 检查当前是否在正确页面
@@ -1713,7 +1819,7 @@ class XyzAccessibilityService : AccessibilityService() {
         // 5. 处理可能出现的验证码或网络错误
         var maxRetries = 99999999
         var dateButtonIndex = 0
-        while (maxRetries > 0) {
+        while (maxRetries > 0 && isTicketGrabbingActive) {
             when {
                 isInCaptchaPage() -> {
                     Log.d(TAG, "进入验证码页面")
@@ -1781,6 +1887,11 @@ class XyzAccessibilityService : AccessibilityService() {
             }
         }
 
+        // 检查是否是因为用户停止而退出循环
+        if (!isTicketGrabbingActive) {
+            Log.d(TAG, "抢票流程被用户停止")
+            return false
+        }
 
         Log.d(TAG, "抢票流程完成，未成功抢到票")
         return false

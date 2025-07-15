@@ -5,12 +5,12 @@ plugins {
 
 android {
     namespace = "com.xyz.xyzassister"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.xyz.xyzassister"
         minSdk = 26
-        targetSdk = 33
+        targetSdk = 30
         versionCode = 1
         versionName = "1.0"
 
@@ -22,6 +22,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            isDebuggable = true
+            isMinifyEnabled = false
+            applicationIdSuffix = ".debug"
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
@@ -37,6 +42,7 @@ android {
     kotlinOptions {
         jvmTarget = "11"
     }
+    buildToolsVersion = "36.0.0"
 }
 
 dependencies {

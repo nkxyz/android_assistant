@@ -39,7 +39,22 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        Shizuku.removeRequestPermissionResultListener(REQUEST_PERMISSION_RESULT_LISTENER)
+        // 清理所有 Shizuku 监听器
+        try {
+            Shizuku.removeRequestPermissionResultListener(REQUEST_PERMISSION_RESULT_LISTENER)
+            Shizuku.removeBinderReceivedListener(BINDER_RECEIVED_LISTENER)
+            Shizuku.removeBinderDeadListener(BINDER_DEAD_LISTENER)
+            Log.d("MainActivity", "Shizuku 监听器清理完成")
+        } catch (e: Exception) {
+            Log.e("MainActivity", "清理 Shizuku 监听器失败", e)
+        }
+
+        // 停止悬浮窗服务
+        try {
+            stopFloatingService()
+        } catch (e: Exception) {
+            Log.e("MainActivity", "停止悬浮窗服务失败", e)
+        }
     }
 
     override fun onResume() {
