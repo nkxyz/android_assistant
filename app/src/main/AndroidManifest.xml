@@ -38,18 +38,10 @@
             </intent-filter>
         </activity>
 
-        <!-- 无障碍服务 -->
+        <!-- XyzService - 基于Shizuku的服务 -->
         <service
-            android:name=".XyzAccessibilityService"
-            android:exported="true"
-            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
-            <intent-filter>
-                <action android:name="android.accessibilityservice.AccessibilityService" />
-            </intent-filter>
-            <meta-data
-                android:name="android.accessibilityservice"
-                android:resource="@xml/accessibility_service_config" />
-        </service>
+            android:name=".XyzService"
+            android:exported="false" />
 
         <!-- 悬浮窗服务 -->
         <service

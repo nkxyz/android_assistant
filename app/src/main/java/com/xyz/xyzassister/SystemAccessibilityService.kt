@@ -4,6 +4,8 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.content.Context
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityManager
@@ -12,6 +14,7 @@ import android.view.accessibility.AccessibilityWindowInfo
 import androidx.annotation.RequiresApi
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.concurrent.CopyOnWriteArrayList
 
 class SystemAccessibilityService : IAccessibilityService.Stub() {
 
@@ -22,8 +25,20 @@ class SystemAccessibilityService : IAccessibilityService.Stub() {
     private var accessibilityManager: AccessibilityManager? = null
     private var context: Context? = null
 
+    // 回调管理
+    private val eventCallbacks = CopyOnWriteArrayList<IAccessibilityEventCallback>()
+    private var eventFilter: EventFilter? = null
+    private val handler = Handler(Looper.getMainLooper())
+
+    // 事件过滤器
+    data class EventFilter(
+        val packageNames: Set<String>?,
+        val eventTypes: Int
+    )
+
     init {
         initializeAccessibilityManager()
+//        startAccessibilityEventMonitoring()
     }
 
     /**
@@ -63,14 +78,14 @@ class SystemAccessibilityService : IAccessibilityService.Stub() {
                 windowInfo.put("type", window.type)
                 windowInfo.put("layer", window.layer)
                 windowInfo.put("title", window.title?.toString() ?: "")
-                
+
                 val root = window.root
                 if (root != null) {
                     windowInfo.put("rootNode", nodeToJson(root))
                 }
                 windowsArray.put(windowInfo)
             }
-            
+
             result.put("windows", windowsArray)
             result.toString()
         } catch (e: Exception) {
@@ -86,11 +101,11 @@ class SystemAccessibilityService : IAccessibilityService.Stub() {
         return try {
             val nodes = findNodesByIdInternal(id)
             val result = JSONArray()
-            
+
             for (node in nodes) {
                 result.put(nodeToJson(node))
             }
-            
+
             JSONObject().put("nodes", result).toString()
         } catch (e: Exception) {
             Log.e(TAG, "根据ID查找节点失败", e)
@@ -105,11 +120,11 @@ class SystemAccessibilityService : IAccessibilityService.Stub() {
         return try {
             val nodes = findNodesByTextInternal(text)
             val result = JSONArray()
-            
+
             for (node in nodes) {
                 result.put(nodeToJson(node))
             }
-            
+
             JSONObject().put("nodes", result).toString()
         } catch (e: Exception) {
             Log.e(TAG, "根据文本查找节点失败", e)
@@ -124,11 +139,11 @@ class SystemAccessibilityService : IAccessibilityService.Stub() {
         return try {
             val nodes = findNodesByClassInternal(className)
             val result = JSONArray()
-            
+
             for (node in nodes) {
                 result.put(nodeToJson(node))
             }
-            
+
             JSONObject().put("nodes", result).toString()
         } catch (e: Exception) {
             Log.e(TAG, "根据类名查找节点失败", e)
@@ -199,7 +214,7 @@ class SystemAccessibilityService : IAccessibilityService.Stub() {
                     activeWindows.put(windowInfo)
                 }
             }
-            
+
             result.put("activeWindows", activeWindows)
             result.toString()
         } catch (e: Exception) {
@@ -291,7 +306,7 @@ class SystemAccessibilityService : IAccessibilityService.Stub() {
                 val windowManagerClass = Class.forName("android.view.WindowManagerGlobal")
                 val getInstanceMethod = windowManagerClass.getMethod("getInstance")
                 val windowManager = getInstanceMethod.invoke(null)
-                
+
                 // 这里需要更复杂的反射来获取窗口信息
                 // 暂时返回空列表，实际实现需要根据系统API调整
                 emptyList()
@@ -366,11 +381,11 @@ class SystemAccessibilityService : IAccessibilityService.Stub() {
      */
     private fun findNodesByIdRecursive(node: AccessibilityNodeInfo?, id: String, results: MutableList<AccessibilityNodeInfo>) {
         if (node == null) return
-        
+
         if (node.viewIdResourceName == id) {
             results.add(node)
         }
-        
+
         for (i in 0 until node.childCount) {
             val child = node.getChild(i)
             if (child != null) {
@@ -384,11 +399,11 @@ class SystemAccessibilityService : IAccessibilityService.Stub() {
      */
     private fun findNodesByTextRecursive(node: AccessibilityNodeInfo?, text: String, results: MutableList<AccessibilityNodeInfo>) {
         if (node == null) return
-        
+
         if (node.text?.toString()?.contains(text) == true) {
             results.add(node)
         }
-        
+
         for (i in 0 until node.childCount) {
             val child = node.getChild(i)
             if (child != null) {
@@ -402,11 +417,11 @@ class SystemAccessibilityService : IAccessibilityService.Stub() {
      */
     private fun findNodesByClassRecursive(node: AccessibilityNodeInfo?, className: String, results: MutableList<AccessibilityNodeInfo>) {
         if (node == null) return
-        
+
         if (node.className?.toString()?.contains(className) == true) {
             results.add(node)
         }
-        
+
         for (i in 0 until node.childCount) {
             val child = node.getChild(i)
             if (child != null) {
@@ -430,7 +445,7 @@ class SystemAccessibilityService : IAccessibilityService.Stub() {
             json.put("isFocused", node.isFocused)
             json.put("isSelected", node.isSelected)
             json.put("packageName", node.packageName?.toString() ?: "")
-            
+
             val bounds = android.graphics.Rect()
             node.getBoundsInScreen(bounds)
             val boundsJson = JSONObject()
@@ -439,7 +454,7 @@ class SystemAccessibilityService : IAccessibilityService.Stub() {
             boundsJson.put("right", bounds.right)
             boundsJson.put("bottom", bounds.bottom)
             json.put("bounds", boundsJson)
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "节点转JSON失败", e)
         }

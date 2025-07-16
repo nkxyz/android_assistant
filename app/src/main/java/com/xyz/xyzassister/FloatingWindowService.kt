@@ -278,10 +278,10 @@ class FloatingWindowService : Service() {
     private fun checkCurrentAppAndStartProcess() {
         backgroundExecutor.execute {
             try {
-                val accessibilityService = XyzAccessibilityService.getInstance()
+                val accessibilityService = XyzService.getInstance()
                 if (accessibilityService == null) {
                     handler.post {
-                        Toast.makeText(this@FloatingWindowService, "无障碍服务未连接，无法启动辅助功能", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this@FloatingWindowService, "XyzService未连接，无法启动辅助功能", Toast.LENGTH_LONG).show()
                         restoreFloatingWindow()
                     }
                     return@execute
@@ -329,7 +329,7 @@ class FloatingWindowService : Service() {
     private fun startTicketGrabbingInBackground() {
         backgroundExecutor.execute {
             try {
-                val accessibilityService = XyzAccessibilityService.getInstance()
+                val accessibilityService = XyzService.getInstance()
                 if (accessibilityService != null) {
                     Log.d(TAG, "开始执行抢票流程...")
 
@@ -356,7 +356,7 @@ class FloatingWindowService : Service() {
                     }
                 } else {
                     handler.post {
-                        Toast.makeText(this@FloatingWindowService, "无障碍服务连接丢失", Toast.LENGTH_LONG).show()
+                        Toast.makeText(this@FloatingWindowService, "XyzService连接丢失", Toast.LENGTH_LONG).show()
                         restoreFloatingWindow()
                     }
                 }
@@ -406,7 +406,7 @@ class FloatingWindowService : Service() {
         Log.d(TAG, "停止辅助功能")
 
         // 停止抢票流程
-        val accessibilityService = XyzAccessibilityService.getInstance()
+        val accessibilityService = XyzService.getInstance()
         if (accessibilityService != null) {
             accessibilityService.stopTicketGrabbingProcess()
             Log.d(TAG, "已发送停止抢票流程指令")
@@ -458,16 +458,16 @@ class FloatingWindowService : Service() {
     }
 
     private fun printScreenElements() {
-        val accessibilityService = XyzAccessibilityService.getInstance()
+        val accessibilityService = XyzService.getInstance()
         if (accessibilityService != null) {
             // 打印当前窗口信息
             accessibilityService.printCurrentWindowInfo()
 
-            // 打印屏幕元素
-            accessibilityService.printScreenElements()
+            // TODO: 实现基于Shizuku的屏幕元素打印功能
+            Log.w(TAG, "printScreenElements: 功能暂未实现")
 
             // 显示当前Activity ID信息
-            val activityId = accessibilityService.getCurrentActivityId()
+            val activityId = accessibilityService.getCurrentActivity()
             Log.d("FloatingWindowService", "当前Activity ID: ${activityId ?: "null"}")
 
             Toast.makeText(this, "窗口信息和屏幕元素已打印到logcat", Toast.LENGTH_SHORT).show()

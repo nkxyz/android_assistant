@@ -9,7 +9,7 @@ class XyzApplication : Application() {
     companion object {
         private const val TAG = "XyzApplication"
         private var instance: XyzApplication? = null
-        
+
         fun getInstance(): XyzApplication? = instance
     }
 
@@ -22,7 +22,7 @@ class XyzApplication : Application() {
     override fun onTerminate() {
         super.onTerminate()
         Log.i(TAG, "应用程序即将终止，开始清理Shizuku资源...")
-        
+
         try {
             // 清理Shizuku用户服务
             cleanupShizukuServices()
@@ -30,7 +30,7 @@ class XyzApplication : Application() {
         } catch (e: Exception) {
             Log.e(TAG, "清理Shizuku资源失败", e)
         }
-        
+
         instance = null
         Log.i(TAG, "应用程序终止完成")
     }
@@ -40,20 +40,20 @@ class XyzApplication : Application() {
      */
     private fun cleanupShizukuServices() {
         try {
-            // 获取无障碍服务实例并调用其清理方法
-            val accessibilityService = XyzAccessibilityService.getInstance()
-            if (accessibilityService != null) {
-                Log.i(TAG, "通过无障碍服务清理Shizuku资源")
-                // 调用无障碍服务的清理方法
-                accessibilityService.forceCleanupShizuku()
+            // 获取服务实例并调用其清理方法
+            val service = XyzService.getInstance()
+            if (service != null) {
+                Log.i(TAG, "通过XyzService清理Shizuku资源")
+                // 调用服务的清理方法
+                service.forceCleanupShizuku()
             } else {
-                Log.w(TAG, "无障碍服务实例不存在，直接清理Shizuku资源")
+                Log.w(TAG, "XyzService实例不存在，直接清理Shizuku资源")
                 // 直接清理Shizuku资源
                 directCleanupShizuku()
             }
         } catch (e: Exception) {
             Log.e(TAG, "清理Shizuku服务异常", e)
-            // 如果通过无障碍服务清理失败，尝试直接清理
+            // 如果通过服务清理失败，尝试直接清理
             try {
                 directCleanupShizuku()
             } catch (e2: Exception) {
@@ -70,11 +70,11 @@ class XyzApplication : Application() {
             // 移除所有可能的Shizuku监听器
             // 注意：这里我们不能访问具体的监听器实例，所以只能尝试通用清理
             Log.i(TAG, "执行直接Shizuku清理")
-            
+
             // 这里可以添加更多的直接清理逻辑
             // 但由于Shizuku的用户服务是绑定到具体服务实例的，
             // 最好的方式还是通过无障碍服务来清理
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "直接清理Shizuku资源失败", e)
         }
@@ -88,15 +88,5 @@ class XyzApplication : Application() {
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
         Log.w(TAG, "系统要求释放内存，级别: $level")
-        
-        // 在内存紧张时也尝试清理资源
-        if (level >= TRIM_MEMORY_RUNNING_CRITICAL) {
-            Log.i(TAG, "内存严重不足，尝试清理Shizuku资源")
-            try {
-                cleanupShizukuServices()
-            } catch (e: Exception) {
-                Log.e(TAG, "内存不足时清理Shizuku资源失败", e)
-            }
-        }
     }
 }

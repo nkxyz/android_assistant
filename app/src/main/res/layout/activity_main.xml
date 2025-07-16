@@ -23,11 +23,28 @@
         android:gravity="center"
         android:layout_marginBottom="24dp" />
 
+    <TextView
+        android:id="@+id/shizukuStatusText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Shizuku状态检查中..."
+        android:textSize="14sp"
+        android:gravity="center"
+        android:layout_marginBottom="24dp"
+        android:textColor="#666666" />
+
     <Button
         android:id="@+id/enableButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:text="启用无障碍服务"
+        android:layout_marginBottom="16dp" />
+
+    <Button
+        android:id="@+id/checkShizukuButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="检查并初始化Shizuku连接"
         android:layout_marginBottom="16dp" />
 
     <Button

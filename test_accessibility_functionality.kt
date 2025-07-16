@@ -2,39 +2,42 @@
 // This would be used to test the app's capabilities
 
 fun testAccessibilityFunctions() {
-    // Test 1: Check if accessibility service is connected
-    val service = XyzAccessibilityService.instance
+    // Test 1: Check if XyzService is connected
+    val service = XyzService.getInstance()
     if (service != null) {
-        println("[DEBUG_LOG] Accessibility service is connected")
-        
-        // Test 2: Print screen elements
-        service.printScreenElements()
-        
-        // Test 3: Find elements by different criteria
-        val buttonById = service.findNodeById("com.example:id/button")
-        val textByContent = service.findNodeByText("确定")
-        val viewByClass = service.findNodeByClass("Button")
-        
-        println("[DEBUG_LOG] Found button by ID: ${buttonById != null}")
-        println("[DEBUG_LOG] Found text by content: ${textByContent != null}")
-        println("[DEBUG_LOG] Found view by class: ${viewByClass != null}")
-        
-        // Test 4: Perform click operations
-        if (buttonById != null) {
-            val clickResult = service.clickNode(buttonById)
-            println("[DEBUG_LOG] Click operation result: $clickResult")
-        }
-        
-        // Test 5: Perform gesture operations
-        val gestureResult = service.clickAt(500f, 800f)
-        println("[DEBUG_LOG] Gesture operation result: $gestureResult")
-        
-        // Test 6: Perform drag operation
+        println("[DEBUG_LOG] XyzService is connected")
+
+        // Test 2: Print current window info
+        service.printCurrentWindowInfo()
+
+        // Test 3: Test Shizuku-based system accessibility service
+        val systemNodeInfo = service.getSystemRootNodeInfo()
+        val systemNodeById = service.findSystemNodeById("com.example:id/button")
+        val systemNodeByText = service.findSystemNodeByText("确定")
+        val systemNodeByClass = service.findSystemNodeByClass("Button")
+
+        println("[DEBUG_LOG] System root node info: ${systemNodeInfo != null}")
+        println("[DEBUG_LOG] Found system node by ID: ${systemNodeById != null}")
+        println("[DEBUG_LOG] Found system node by text: ${systemNodeByText != null}")
+        println("[DEBUG_LOG] Found system node by class: ${systemNodeByClass != null}")
+
+        // Test 4: Perform click operations using coordinates
+        val clickResult = service.clickAt(500f, 800f)
+        println("[DEBUG_LOG] Click operation result: $clickResult")
+
+        // Test 5: Perform drag operation
         val dragResult = service.dragFromTo(100f, 200f, 300f, 400f)
         println("[DEBUG_LOG] Drag operation result: $dragResult")
-        
+
+        // Test 6: Test other input operations
+        val longClickResult = service.longClickAt(500f, 800f)
+        println("[DEBUG_LOG] Long click operation result: $longClickResult")
+
+        val doubleClickResult = service.doubleClickAt(500f, 800f)
+        println("[DEBUG_LOG] Double click operation result: $doubleClickResult")
+
     } else {
-        println("[DEBUG_LOG] Accessibility service is not connected")
+        println("[DEBUG_LOG] XyzService is not connected")
     }
 }
 

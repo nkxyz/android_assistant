@@ -21,39 +21,36 @@ import rikka.shizuku.Shizuku.OnRequestPermissionResultListener
 
 class MainActivity : AppCompatActivity() {
 
+    companion object {
+        private const val TAG = "xyzMainActivity"
+    }
+
     private lateinit var statusText: TextView
     private lateinit var enableButton: Button
     private lateinit var startButton: Button
     private lateinit var stopButton: Button
+    private lateinit var shizukuStatusText: TextView  // 新增
+    private lateinit var checkShizukuButton: Button  // 新增
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
-        Shizuku.addBinderReceivedListenerSticky(BINDER_RECEIVED_LISTENER);
-        Shizuku.addBinderDeadListener(BINDER_DEAD_LISTENER);
-        Shizuku.addRequestPermissionResultListener(REQUEST_PERMISSION_RESULT_LISTENER)
-        checkPermission(123123)
+        // 启动XyzService，这会触发其onCreate方法
+        val intent = Intent(this, XyzService::class.java)
+        startService(intent)
+        checkPermission(0)
         initViews()
         updateStatus()
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        // 清理所有 Shizuku 监听器
-        try {
-            Shizuku.removeRequestPermissionResultListener(REQUEST_PERMISSION_RESULT_LISTENER)
-            Shizuku.removeBinderReceivedListener(BINDER_RECEIVED_LISTENER)
-            Shizuku.removeBinderDeadListener(BINDER_DEAD_LISTENER)
-            Log.d("MainActivity", "Shizuku 监听器清理完成")
-        } catch (e: Exception) {
-            Log.e("MainActivity", "清理 Shizuku 监听器失败", e)
-        }
 
         // 停止悬浮窗服务
         try {
             stopFloatingService()
         } catch (e: Exception) {
-            Log.e("MainActivity", "停止悬浮窗服务失败", e)
+            Log.e(TAG, "停止悬浮窗服务失败", e)
         }
     }
 
@@ -67,9 +64,16 @@ class MainActivity : AppCompatActivity() {
         enableButton = findViewById(R.id.enableButton)
         startButton = findViewById(R.id.startButton)
         stopButton = findViewById(R.id.stopButton)
+        shizukuStatusText = findViewById(R.id.shizukuStatusText)  // 新增
+        checkShizukuButton = findViewById(R.id.checkShizukuButton)  // 新增
 
         enableButton.setOnClickListener {
             openAccessibilitySettings()
+        }
+
+        // 新增Shizuku检查按钮点击事件
+        checkShizukuButton.setOnClickListener {
+            updateStatus()
         }
 
         startButton.setOnClickListener {
@@ -90,6 +94,8 @@ class MainActivity : AppCompatActivity() {
         val isShizukuEnabled = isShizukuAccessibilityServiceAvailable()
         val isAnyEnabled = isTraditionalEnabled || isShizukuEnabled
 
+        Log.d(TAG, "updateStatus: isTraditionalEnabled: $isTraditionalEnabled, isShizukuEnabled: $isShizukuEnabled, isAnyEnabled: $isAnyEnabled")
+
         // 更新状态文本，显示具体的服务状态
         statusText.text = when {
             isTraditionalEnabled && isShizukuEnabled -> "无障碍服务已启用 (传统服务 + Shizuku系统服务)"
@@ -109,9 +115,11 @@ class MainActivity : AppCompatActivity() {
 
         for (service in enabledServices) {
             if (service.resolveInfo.serviceInfo.packageName == packageName) {
+                Log.d(TAG, "isAccessibilityServiceEnabled: ${service.resolveInfo.serviceInfo.packageName} is enabled")
                 return true
             }
         }
+        Log.d(TAG, "isAccessibilityServiceEnabled: no enabled service found")
         return false
     }
 
@@ -120,10 +128,10 @@ class MainActivity : AppCompatActivity() {
      */
     private fun isShizukuAccessibilityServiceAvailable(): Boolean {
         return try {
-            val accessibilityService = XyzAccessibilityService.getInstance()
-            accessibilityService?.isSystemAccessibilityServiceAvailable() == true
+            val service = XyzService.getInstance()
+            service?.isSystemAccessibilityServiceAvailable() == true
         } catch (e: Exception) {
-            Log.e("MainActivity", "检查Shizuku AccessibilityService失败", e)
+            Log.e(TAG, "检查Shizuku AccessibilityService失败", e)
             false
         }
     }
@@ -137,43 +145,19 @@ class MainActivity : AppCompatActivity() {
 
     private fun openAccessibilitySettings() {
         try {
-            // 检查Shizuku服务状态，提供更准确的指导
+            // 检查Shizuku服务状态
             val isShizukuAvailable = isShizukuAccessibilityServiceAvailable()
 
-            // 方法1：直接跳转到本应用的无障碍服务设置页面
-            val intent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
-
-            // 添加额外参数，尝试直接定位到本应用的服务
-            intent.putExtra(":settings:fragment_args_key", "${packageName}/${XyzAccessibilityService::class.java.name}")
-            intent.putExtra(":settings:show_fragment_args", Bundle().apply {
-                putString("package", packageName)
-            })
-
-            startActivity(intent)
-
-            // 根据Shizuku服务状态显示不同的指导信息
             val message = if (isShizukuAvailable) {
-                "Shizuku系统服务已可用，传统无障碍服务为可选项。如需启用传统服务，请在设置中找到 'XYZ无障碍助手'"
+                "Shizuku系统服务已可用，应用可以正常使用"
             } else {
-                "请在无障碍设置中找到并启用 'XYZ无障碍助手' 服务，或确保Shizuku服务正常运行"
+                "请确保Shizuku服务正常运行并已授权给本应用"
             }
             Toast.makeText(this, message, Toast.LENGTH_LONG).show()
 
         } catch (e: Exception) {
-            // 如果上述方法失败，回退到通用的无障碍设置页面
-            Log.e("MainActivity", "无法直接跳转到应用设置页面: ${e.message}")
-            val fallbackIntent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-            fallbackIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            startActivity(fallbackIntent)
-
-            val isShizukuAvailable = isShizukuAccessibilityServiceAvailable()
-            val message = if (isShizukuAvailable) {
-                "Shizuku系统服务已可用，传统无障碍服务为可选项"
-            } else {
-                "请在设置中找到并启用本应用的无障碍服务，或确保Shizuku服务正常运行"
-            }
-            Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+            Log.e(TAG, "检查Shizuku服务状态失败: ${e.message}")
+            Toast.makeText(this, "请确保Shizuku服务正常运行并已授权给本应用", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -214,45 +198,29 @@ class MainActivity : AppCompatActivity() {
     private fun onRequestPermissionsResult(requestCode: Int, grantResult: Int) {
         val granted = grantResult == PackageManager.PERMISSION_GRANTED
         // Do stuff based on the result and the request code
-        Log.d("xyzAssisterMain", "onRequestPermissionsResult: $requestCode, $granted")
+        Log.d(TAG, "onRequestPermissionsResult: $requestCode, $granted")
     }
-
-    private val REQUEST_PERMISSION_RESULT_LISTENER =
-        Shizuku.OnRequestPermissionResultListener { requestCode: Int, grantResult: Int ->
-            this.onRequestPermissionsResult(
-                requestCode,
-                grantResult
-            )
-        }
 
     private fun checkPermission(code: Int): Boolean {
         if (Shizuku.isPreV11()) {
             // Pre-v11 is unsupported
+            Log.d(TAG, "Shizuku pre-v11 is not supported")
             return false
         }
 
         if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
             // Granted
+            Log.d(TAG, "Shizuku permission granted")
             return true
         } else if (Shizuku.shouldShowRequestPermissionRationale()) {
             // Users choose "Deny and don't ask again"
+            Log.d(TAG, "Shizuku permission denied")
             return false
         } else {
             // Request the permission
+            Log.d(TAG, "Request Shizuku permission")
             Shizuku.requestPermission(code)
             return false
         }
-    }
-
-    private val BINDER_RECEIVED_LISTENER = OnBinderReceivedListener {
-        if (Shizuku.isPreV11()) {
-            Log.d("xyzAssisterMain", "Shizuku pre-v11 is not supported")
-        } else {
-            Log.d("xyzAssisterMain", "Binder received")
-        }
-    }
-
-    private val BINDER_DEAD_LISTENER = OnBinderDeadListener {
-        Log.d("xyzAssisterMain", "Binder dead")
     }
 }
