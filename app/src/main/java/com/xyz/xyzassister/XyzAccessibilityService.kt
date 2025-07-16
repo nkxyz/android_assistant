@@ -2,30 +2,24 @@ package com.xyz.xyzassister
 
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
-import android.app.Instrumentation
-import android.content.ComponentName
-import android.content.ServiceConnection
-import android.content.pm.PackageManager
 import android.graphics.Path
 import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.os.Bundle
 import android.os.Handler
-import android.os.IBinder
 import android.os.Looper
-import android.os.SystemClock
 import android.util.Log
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.ImageView
-import rikka.shizuku.Shizuku
-import rikka.shizuku.Shizuku.OnRequestPermissionResultListener
-import kotlin.random.Random
 
+/**
+ * 传统无障碍服务
+ * 提供基本的无障碍功能和手势支持
+ */
 class XyzAccessibilityService : AccessibilityService() {
 
     companion object {
@@ -40,14 +34,11 @@ class XyzAccessibilityService : AccessibilityService() {
 
     private lateinit var windowManager: WindowManager
     private val handler = Handler(Looper.getMainLooper())
-    private val activeIndicators = mutableListOf<View>()
-
 
     // 存储当前窗口/Activity信息
     private var currentPackageName: String? = null
     private var currentClassName: String? = null
     private var currentActivityName: String? = null
-
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -57,7 +48,6 @@ class XyzAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // 监听屏幕变化事件
         if (event == null) return
 
         when (event.eventType) {
@@ -67,6 +57,10 @@ class XyzAccessibilityService : AccessibilityService() {
                 currentClassName = event.className?.toString()
 
                 // 尝试从className中提取Activity名称
+                if (currentClassName?.contains(".") == true) {
+                    currentActivityName = currentClassName
+                }
+
                 Log.d(TAG, "窗口状态改变:")
                 Log.d(TAG, "  包名: $currentPackageName")
                 Log.d(TAG, "  类名: $currentClassName")
@@ -74,18 +68,11 @@ class XyzAccessibilityService : AccessibilityService() {
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
                 // 窗口内容改变时也可能需要更新信息
                 val newPackageName = event.packageName?.toString()
-                updatePackageNameIfChanged(newPackageName)
+                if (currentPackageName != newPackageName) {
+                    currentPackageName = newPackageName
+                    Log.d(TAG, "窗口内容改变，包名更新: $currentPackageName")
+                }
             }
-        }
-    }
-
-    /**
-     * 如果包名发生变化则更新
-     */
-    private fun updatePackageNameIfChanged(newPackageName: String?) {
-        if (currentPackageName != newPackageName) {
-            currentPackageName = newPackageName
-            Log.d(TAG, "窗口内容改变，包名更新: $currentPackageName")
         }
     }
 
@@ -124,7 +111,18 @@ class XyzAccessibilityService : AccessibilityService() {
     /**
      * 递归打印节点树
      */
-    private fun printNodeTree(node: AccessibilityNodeInfo?, depth: Int) {
+    fun printNodeTree(depth: Int = 0) {
+        val rootNode = rootInActiveWindow
+        if (rootNode != null) {
+            Log.d(TAG, "========== 节点树开始 ==========")
+            printNodeTreeRecursive(rootNode, 0)
+            Log.d(TAG, "========== 节点树结束 ==========")
+        } else {
+            Log.w(TAG, "无法获取根节点")
+        }
+    }
+
+    private fun printNodeTreeRecursive(node: AccessibilityNodeInfo?, depth: Int) {
         if (node == null) return
 
         val indent = "  ".repeat(depth)
@@ -141,13 +139,12 @@ class XyzAccessibilityService : AccessibilityService() {
         nodeInfo.append(", Size: ${bounds.width()}x${bounds.height()}")
         nodeInfo.append(", Clickable: ${node.isClickable}")
         nodeInfo.append(", Enabled: ${node.isEnabled}")
-        nodeInfo.append(", Focusable: ${node.isFocusable}")
 
         Log.d(TAG, nodeInfo.toString())
 
         // 递归打印子节点
         for (i in 0 until node.childCount) {
-            printNodeTree(node.getChild(i), depth + 1)
+            printNodeTreeRecursive(node.getChild(i), depth + 1)
         }
     }
 
@@ -162,10 +159,8 @@ class XyzAccessibilityService : AccessibilityService() {
     private fun findNodeByIdRecursive(node: AccessibilityNodeInfo?, id: String): AccessibilityNodeInfo? {
         if (node == null) return null
 
-//        Log.d(TAG, "current resource id: ${node.viewIdResourceName}")
-
         if (node.viewIdResourceName == id) {
-            Log.d(TAG, "find node by id: $id")
+            Log.d(TAG, "找到节点: $id")
             return node
         }
 
@@ -188,7 +183,7 @@ class XyzAccessibilityService : AccessibilityService() {
     private fun findNodeByTextRecursive(node: AccessibilityNodeInfo?, text: String): AccessibilityNodeInfo? {
         if (node == null) return null
 
-        if (node.text?.toString()?.contains(text) == true || 
+        if (node.text?.toString()?.contains(text) == true ||
             node.contentDescription?.toString()?.contains(text) == true) {
             return node
         }
@@ -225,7 +220,7 @@ class XyzAccessibilityService : AccessibilityService() {
     }
 
     /**
-     * 点击指定节点 - 使用坐标模拟点击
+     * 点击指定节点 - 使用节点动作
      */
     fun clickNode(node: AccessibilityNodeInfo?): Boolean {
         if (node == null) {
@@ -241,20 +236,172 @@ class XyzAccessibilityService : AccessibilityService() {
             return false
         }
 
-        // 计算节点中心区域的随机点击坐标
-        val centerX = bounds.centerX()
-        val centerY = bounds.centerY()
-
-        // 在中心区域的70%范围内随机选择点击点，避免边缘区域
-        val rangeX = (bounds.width() * 0.35).toInt()
-        val rangeY = (bounds.height() * 0.35).toInt()
-
-        val randomX = centerX + Random.nextInt(-rangeX, rangeX + 1)
-        val randomY = centerY + Random.nextInt(-rangeY, rangeY + 1)
-
-        Log.d(TAG, "点击节点坐标: ($randomX, $randomY), 节点边界: $bounds")
+        Log.d(TAG, "点击节点: ${node.viewIdResourceName}, 边界: $bounds")
 
         return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
     }
 
+    /**
+     * 使用手势执行点击
+     */
+    fun performGestureClick(x: Float, y: Float): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.N) {
+            Log.w(TAG, "手势功能需要Android N及以上版本")
+            return false
+        }
+
+        val path = Path()
+        path.moveTo(x, y)
+
+        val gestureBuilder = GestureDescription.Builder()
+        gestureBuilder.addStroke(GestureDescription.StrokeDescription(path, 0, 50))
+
+        val gesture = gestureBuilder.build()
+
+        var result = false
+        val callback = object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                super.onCompleted(gestureDescription)
+                result = true
+                Log.d(TAG, "手势点击成功: ($x, $y)")
+            }
+
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                super.onCancelled(gestureDescription)
+                Log.w(TAG, "手势点击被取消: ($x, $y)")
+            }
+        }
+
+        dispatchGesture(gesture, callback, null)
+
+        // 等待手势完成
+        Thread.sleep(100)
+
+        return result
+    }
+
+    /**
+     * 使用手势执行长按
+     */
+    fun performGestureLongClick(x: Float, y: Float, duration: Long): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.N) {
+            Log.w(TAG, "手势功能需要Android N及以上版本")
+            return false
+        }
+
+        val path = Path()
+        path.moveTo(x, y)
+
+        val gestureBuilder = GestureDescription.Builder()
+        gestureBuilder.addStroke(GestureDescription.StrokeDescription(path, 0, duration))
+
+        val gesture = gestureBuilder.build()
+
+        var result = false
+        val callback = object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                super.onCompleted(gestureDescription)
+                result = true
+                Log.d(TAG, "手势长按成功: ($x, $y), 持续时间: ${duration}ms")
+            }
+
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                super.onCancelled(gestureDescription)
+                Log.w(TAG, "手势长按被取消: ($x, $y)")
+            }
+        }
+
+        dispatchGesture(gesture, callback, null)
+
+        // 等待手势完成
+        Thread.sleep(duration + 100)
+
+        return result
+    }
+
+    /**
+     * 使用手势执行拖拽
+     */
+    fun performGestureDrag(
+        startX: Float, startY: Float,
+        endX: Float, endY: Float,
+        duration: Long
+    ): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.N) {
+            Log.w(TAG, "手势功能需要Android N及以上版本")
+            return false
+        }
+
+        val path = Path()
+        path.moveTo(startX, startY)
+        path.lineTo(endX, endY)
+
+        val gestureBuilder = GestureDescription.Builder()
+        gestureBuilder.addStroke(GestureDescription.StrokeDescription(path, 0, duration))
+
+        val gesture = gestureBuilder.build()
+
+        var result = false
+        val callback = object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                super.onCompleted(gestureDescription)
+                result = true
+                Log.d(TAG, "手势拖拽成功: ($startX, $startY) -> ($endX, $endY)")
+            }
+
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                super.onCancelled(gestureDescription)
+                Log.w(TAG, "手势拖拽被取消")
+            }
+        }
+
+        dispatchGesture(gesture, callback, null)
+
+        // 等待手势完成
+        Thread.sleep(duration + 100)
+
+        return result
+    }
+
+    /**
+     * 执行全局动作（返回、主页、最近任务等）
+     */
+    fun performGlobalActionCompat(action: Int): Boolean {
+        return performGlobalAction(action)
+    }
+
+    /**
+     * 获取当前Activity
+     */
+    fun getCurrentActivity(): String? {
+        return currentActivityName ?: currentClassName
+    }
+
+    /**
+     * 获取当前窗口信息
+     */
+    fun getCurrentWindowInfo(): String {
+        return buildString {
+            append("当前窗口信息:\n")
+            append("包名: ${currentPackageName ?: "未知"}\n")
+            append("类名: ${currentClassName ?: "未知"}\n")
+            append("Activity: ${currentActivityName ?: "未知"}\n")
+
+            val rootNode = rootInActiveWindow
+            if (rootNode != null) {
+                append("根节点包名: ${rootNode.packageName}\n")
+                append("根节点类名: ${rootNode.className}\n")
+                append("子节点数: ${rootNode.childCount}\n")
+            } else {
+                append("根节点: 不可用\n")
+            }
+        }
+    }
+
+    /**
+     * 打印当前窗口信息
+     */
+    fun printCurrentWindowInfo() {
+        Log.d(TAG, getCurrentWindowInfo())
+    }
 }

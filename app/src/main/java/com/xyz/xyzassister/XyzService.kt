@@ -7,15 +7,21 @@ import android.graphics.Rect
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.RemoteException
 import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.widget.ImageView
+import org.json.JSONObject
 import kotlin.random.Random
 
-
+/**
+ * 协调服务
+ * 统一管理传统无障碍服务和Shizuku系统服务
+ */
 class XyzService : Service() {
 
     companion object {
@@ -37,6 +43,9 @@ class XyzService : Service() {
     private var currentClassName: String? = null
     private var currentActivityName: String? = null
 
+    // 系统无障碍服务事件回调
+    private var systemAccessibilityCallback: IAccessibilityEventCallback? = null
+
     override fun onCreate() {
         super.onCreate()
         windowManager = getSystemService(WINDOW_SERVICE) as WindowManager
@@ -45,6 +54,9 @@ class XyzService : Service() {
 
         // 初始化 Shizuku 服务管理器
         ShizukuServiceManager.getInstance(this)?.initializeShizuku()
+
+        // 注册系统无障碍服务事件监听
+        registerSystemAccessibilityEventListener()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -55,6 +67,9 @@ class XyzService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         Log.i(TAG, "XyzService开始销毁")
+
+        // 取消注册事件监听
+        unregisterSystemAccessibilityEventListener()
 
         // 停止所有正在运行的流程
         try {
@@ -101,12 +116,125 @@ class XyzService : Service() {
     }
 
     /**
-     * 强制清理 Shizuku 资源 - 可从外部调用
-     * 用于应用程序终止时的资源清理
+     * 注册系统无障碍服务事件监听
+     */
+    private fun registerSystemAccessibilityEventListener() {
+        try {
+            systemAccessibilityCallback = object : IAccessibilityEventCallback.Stub() {
+                override fun onAccessibilityEvent(
+                    eventType: Int,
+                    packageName: String?,
+                    className: String?,
+                    text: String?,
+                    contentDescription: String?,
+                    eventTime: Long,
+                    windowId: Int
+                ) {
+                    handler.post {
+                        handleSystemAccessibilityEvent(
+                            eventType, packageName, className,
+                            text, contentDescription, eventTime, windowId
+                        )
+                    }
+                }
+
+                override fun onInterrupt() {
+                    Log.w(TAG, "系统无障碍服务被中断")
+                }
+
+                override fun onServiceConnectionChanged(connected: Boolean) {
+                    Log.i(TAG, "系统无障碍服务连接状态变化: $connected")
+                }
+            }
+
+            // 注册到系统无障碍服务
+            val shizukuManager = ShizukuServiceManager.getInstance()
+            val systemService = shizukuManager?.getSystemAccessibilityService()
+            if (systemService != null) {
+                val success = systemService.registerEventCallback(
+                    systemAccessibilityCallback,
+                    AccessibilityEvent.TYPES_ALL_MASK
+                )
+                if (success) {
+                    Log.i(TAG, "成功注册系统无障碍服务事件监听")
+
+                    // 设置事件过滤器，只监听窗口状态变化
+                    systemService.setEventFilter(
+                        null,  // 监听所有包名
+                        AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED or
+                                AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+                    )
+                } else {
+                    Log.w(TAG, "注册系统无障碍服务事件监听失败")
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "注册系统无障碍服务事件监听异常", e)
+        }
+    }
+
+    /**
+     * 取消注册系统无障碍服务事件监听
+     */
+    private fun unregisterSystemAccessibilityEventListener() {
+        try {
+            systemAccessibilityCallback?.let { callback ->
+                val shizukuManager = ShizukuServiceManager.getInstance()
+                val systemService = shizukuManager?.getSystemAccessibilityService()
+                systemService?.unregisterEventCallback(callback)
+                Log.i(TAG, "已取消注册系统无障碍服务事件监听")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "取消注册系统无障碍服务事件监听失败", e)
+        }
+        systemAccessibilityCallback = null
+    }
+
+    /**
+     * 处理系统无障碍服务事件
+     */
+    private fun handleSystemAccessibilityEvent(
+        eventType: Int,
+        packageName: String?,
+        className: String?,
+        text: String?,
+        contentDescription: String?,
+        eventTime: Long,
+        windowId: Int
+    ) {
+        when (eventType) {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                // 更新当前窗口信息
+                currentPackageName = packageName
+                currentClassName = className
+
+                // 从className中提取Activity名称
+                if (className?.contains(".") == true) {
+                    currentActivityName = className
+                }
+
+                Log.d(TAG, "窗口状态改变 [Shizuku]:")
+                Log.d(TAG, "  包名: $packageName")
+                Log.d(TAG, "  类名: $className")
+                Log.d(TAG, "  文本: $text")
+            }
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
+                // 窗口内容改变
+                if (packageName != currentPackageName) {
+                    currentPackageName = packageName
+                    Log.d(TAG, "窗口内容改变，包名更新 [Shizuku]: $packageName")
+                }
+            }
+        }
+    }
+
+    /**
+     * 强制清理 Shizuku 资源
      */
     fun forceCleanupShizuku() {
         try {
             Log.i(TAG, "开始强制清理Shizuku资源...")
+            unregisterSystemAccessibilityEventListener()
             ShizukuServiceManager.getInstance()?.forceCleanupShizuku()
             Log.i(TAG, "强制清理Shizuku资源完成")
         } catch (e: Exception) {
@@ -118,6 +246,9 @@ class XyzService : Service() {
      * 点击指定坐标
      */
     fun clickAt(x: Float, y: Float): Boolean {
+        // 显示点击指示器
+        showClickIndicator(x, y)
+
         // 优先使用 Binder 服务
         if (ShizukuServiceManager.getInstance()?.isShizukuAvailable() == true &&
             ShizukuServiceManager.getInstance()?.isShizukuPermissionGranted() == true &&
@@ -129,14 +260,10 @@ class XyzService : Service() {
             Log.w(TAG, "Binder服务点击失败，尝试其他方法")
         }
 
-        // 回退到 Shizuku Shell 命令
-        if (ShizukuServiceManager.getInstance()?.isShizukuAvailable() == true &&
-            ShizukuServiceManager.getInstance()?.isShizukuPermissionGranted() == true) {
-            val result = clickAtWithShizukuShell(x, y)
-            if (result) {
-                return true
-            }
-            Log.w(TAG, "Shizuku Shell点击失败")
+        // 回退到传统无障碍服务手势
+        val xyzAccessibilityService = XyzAccessibilityService.getInstance()
+        if (xyzAccessibilityService != null) {
+            return xyzAccessibilityService.performGestureClick(x, y)
         }
 
         Log.e(TAG, "所有点击方法都失败了")
@@ -157,21 +284,6 @@ class XyzService : Service() {
     }
 
     /**
-     * 使用Shizuku Shell命令点击
-     */
-    private fun clickAtWithShizukuShell(x: Float, y: Float): Boolean {
-        return try {
-            // 使用 InstrumentationService 的 click 方法作为替代
-            // 因为 Shizuku.newProcess 是私有的，我们通过 InstrumentationService 来实现
-            Log.w(TAG, "Shizuku Shell点击暂不可用，使用其他方法")
-            false
-        } catch (e: Exception) {
-            Log.e(TAG, "Shizuku Shell点击异常", e)
-            false
-        }
-    }
-
-    /**
      * 拖拽操作
      */
     fun dragFromTo(startX: Float, startY: Float, endX: Float, endY: Float, duration: Long = 500): Boolean {
@@ -184,6 +296,12 @@ class XyzService : Service() {
                 return true
             }
             Log.w(TAG, "Binder服务拖拽失败，尝试其他方法")
+        }
+
+        // 回退到传统无障碍服务手势
+        val xyzAccessibilityService = XyzAccessibilityService.getInstance()
+        if (xyzAccessibilityService != null) {
+            return xyzAccessibilityService.performGestureDrag(startX, startY, endX, endY, duration)
         }
 
         Log.e(TAG, "所有拖拽方法都失败了")
@@ -210,7 +328,8 @@ class XyzService : Service() {
      * 长按操作
      */
     fun longClickAt(x: Float, y: Float, duration: Long = 1000): Boolean {
-        // 优先使用 Binder 服务
+        showClickIndicator(x, y)
+
         if (ShizukuServiceManager.getInstance()?.isShizukuAvailable() == true &&
             ShizukuServiceManager.getInstance()?.isShizukuPermissionGranted() == true &&
             ShizukuServiceManager.getInstance()?.getInstrumentationService() != null) {
@@ -218,10 +337,14 @@ class XyzService : Service() {
             if (result) {
                 return true
             }
-            Log.w(TAG, "Binder服务长按失败")
         }
 
-        Log.e(TAG, "所有长按方法都失败了")
+        // 回退到传统无障碍服务
+        val xyzAccessibilityService = XyzAccessibilityService.getInstance()
+        if (xyzAccessibilityService != null) {
+            return xyzAccessibilityService.performGestureLongClick(x, y, duration)
+        }
+
         return false
     }
 
@@ -242,7 +365,8 @@ class XyzService : Service() {
      * 双击操作
      */
     fun doubleClickAt(x: Float, y: Float): Boolean {
-        // 优先使用 Binder 服务
+        showClickIndicator(x, y)
+
         if (ShizukuServiceManager.getInstance()?.isShizukuAvailable() == true &&
             ShizukuServiceManager.getInstance()?.isShizukuPermissionGranted() == true &&
             ShizukuServiceManager.getInstance()?.getInstrumentationService() != null) {
@@ -250,11 +374,10 @@ class XyzService : Service() {
             if (result) {
                 return true
             }
-            Log.w(TAG, "Binder服务双击失败")
         }
 
-        Log.e(TAG, "所有双击方法都失败了")
-        return false
+        // 回退：两次点击
+        return clickAt(x, y) && clickAt(x, y)
     }
 
     /**
@@ -266,19 +389,6 @@ class XyzService : Service() {
             service.doubleClick(x, y)
         } catch (e: Exception) {
             Log.e(TAG, "Binder服务双击失败", e)
-            false
-        }
-    }
-
-    /**
-     * 滑块操作
-     */
-    fun slideSeekBar(startX: Float, startY: Float, endX: Float, endY: Float, steps: Int = 20): Boolean {
-        return try {
-            val service = ShizukuServiceManager.getInstance()?.getInstrumentationService() ?: return false
-            service.slideSeekBar(startX, startY, endX, endY, steps)
-        } catch (e: Exception) {
-            Log.e(TAG, "Binder服务滑块操作失败", e)
             false
         }
     }
@@ -309,137 +419,6 @@ class XyzService : Service() {
         }
     }
 
-    // 系统级无障碍服务方法
-    /**
-     * 获取系统级根节点信息
-     */
-    fun getSystemRootNodeInfo(): String? {
-        return try {
-            val service = ShizukuServiceManager.getInstance()?.getSystemAccessibilityService() ?: return null
-            service.getRootNodeInfo()
-        } catch (e: Exception) {
-            Log.e(TAG, "获取系统级根节点信息失败", e)
-            null
-        }
-    }
-
-    /**
-     * 系统级根据ID查找节点
-     */
-    fun findSystemNodeById(id: String): String? {
-        return try {
-            val service = ShizukuServiceManager.getInstance()?.getSystemAccessibilityService() ?: return null
-            service.findNodeById(id)
-        } catch (e: Exception) {
-            Log.e(TAG, "系统级根据ID查找节点失败", e)
-            null
-        }
-    }
-
-    /**
-     * 系统级根据文本查找节点
-     */
-    fun findSystemNodeByText(text: String): String? {
-        return try {
-            val service = ShizukuServiceManager.getInstance()?.getSystemAccessibilityService() ?: return null
-            service.findNodeByText(text)
-        } catch (e: Exception) {
-            Log.e(TAG, "系统级根据文本查找节点失败", e)
-            null
-        }
-    }
-
-    /**
-     * 系统级根据类名查找节点
-     */
-    fun findSystemNodeByClass(className: String): String? {
-        return try {
-            val service = ShizukuServiceManager.getInstance()?.getSystemAccessibilityService() ?: return null
-            service.findNodeByClass(className)
-        } catch (e: Exception) {
-            Log.e(TAG, "系统级根据类名查找节点失败", e)
-            null
-        }
-    }
-
-    /**
-     * 系统级点击节点
-     */
-    fun clickSystemNodeById(id: String): Boolean {
-        return try {
-            val service = ShizukuServiceManager.getInstance()?.getSystemAccessibilityService() ?: return false
-            service.clickNodeById(id)
-        } catch (e: Exception) {
-            Log.e(TAG, "系统级点击节点失败", e)
-            false
-        }
-    }
-
-    /**
-     * 系统级点击节点
-     */
-    fun clickSystemNodeByText(text: String): Boolean {
-        return try {
-            val service = ShizukuServiceManager.getInstance()?.getSystemAccessibilityService() ?: return false
-            service.clickNodeByText(text)
-        } catch (e: Exception) {
-            Log.e(TAG, "系统级点击节点失败", e)
-            false
-        }
-    }
-
-    /**
-     * 获取系统级当前窗口信息
-     */
-    fun getSystemCurrentWindowInfo(): String? {
-        return try {
-            val service = ShizukuServiceManager.getInstance()?.getSystemAccessibilityService() ?: return null
-            service.getCurrentWindowInfo()
-        } catch (e: Exception) {
-            Log.e(TAG, "获取系统级当前窗口信息失败", e)
-            null
-        }
-    }
-
-    /**
-     * 获取系统级当前包名
-     */
-    fun getSystemCurrentPackageName(): String? {
-        return try {
-            val service = ShizukuServiceManager.getInstance()?.getSystemAccessibilityService() ?: return null
-            service.getCurrentPackageName()
-        } catch (e: Exception) {
-            Log.e(TAG, "获取系统级当前包名失败", e)
-            null
-        }
-    }
-
-    /**
-     * 执行系统级全局手势
-     */
-    fun performSystemGlobalAction(action: Int): Boolean {
-        return try {
-            val service = ShizukuServiceManager.getInstance()?.getSystemAccessibilityService() ?: return false
-            service.performGlobalAction(action)
-        } catch (e: Exception) {
-            Log.e(TAG, "执行系统级全局手势失败", e)
-            false
-        }
-    }
-
-    /**
-     * 检查SystemAccessibilityService是否可用
-     */
-    fun isSystemAccessibilityServiceAvailable(): Boolean {
-        return try {
-            val service = ShizukuServiceManager.getInstance()?.getSystemAccessibilityService() ?: return false
-            service.isServiceAvailable()
-        } catch (e: Exception) {
-            Log.e(TAG, "检查SystemAccessibilityService可用性失败", e)
-            false
-        }
-    }
-
     /**
      * 显示点击指示器
      */
@@ -450,8 +429,8 @@ class XyzService : Service() {
                 indicator.setImageResource(R.drawable.click_indicator)
 
                 val params = WindowManager.LayoutParams(
-                    dpToPx(),
-                    dpToPx(),
+                    dpToPx(24),
+                    dpToPx(24),
                     WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                             WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
@@ -460,8 +439,8 @@ class XyzService : Service() {
                 )
 
                 params.gravity = Gravity.TOP or Gravity.START
-                params.x = (x - dpToPx() / 2).toInt()
-                params.y = (y - dpToPx() / 2).toInt()
+                params.x = (x - dpToPx(12)).toInt()
+                params.y = (y - dpToPx(12)).toInt()
 
                 windowManager.addView(indicator, params)
                 activeIndicators.add(indicator)
@@ -516,9 +495,9 @@ class XyzService : Service() {
     /**
      * dp转px
      */
-    private fun dpToPx(): Int {
+    private fun dpToPx(dp: Int): Int {
         val density = resources.displayMetrics.density
-        return (24 * density + 0.5f).toInt()
+        return (dp * density + 0.5f).toInt()
     }
 
     /**
@@ -532,7 +511,29 @@ class XyzService : Service() {
      * 获取当前Activity
      */
     fun getCurrentActivity(): String? {
-        return currentActivityName ?: currentClassName
+        // 优先返回从系统服务获取的信息
+        val systemActivity = currentActivityName ?: currentClassName
+        if (!systemActivity.isNullOrEmpty()) {
+            return systemActivity
+        }
+
+        // 从传统无障碍服务获取
+        val xyzAccessibilityService = XyzAccessibilityService.getInstance()
+        return xyzAccessibilityService?.getCurrentActivity()
+    }
+
+    /**
+     * 获取当前包名
+     */
+    fun getCurrentPackageName(): String? {
+        // 优先返回从系统服务获取的信息
+        if (!currentPackageName.isNullOrEmpty()) {
+            return currentPackageName
+        }
+
+        // 从传统无障碍服务获取
+        val xyzAccessibilityService = XyzAccessibilityService.getInstance()
+        return xyzAccessibilityService?.rootInActiveWindow?.packageName?.toString()
     }
 
     /**
@@ -540,10 +541,36 @@ class XyzService : Service() {
      */
     fun getCurrentWindowInfo(): String {
         return buildString {
-            append("当前窗口信息:\n")
+            append("========== 当前窗口信息 ==========\n")
+
+            // 显示当前维护的信息
             append("包名: ${currentPackageName ?: "未知"}\n")
             append("类名: ${currentClassName ?: "未知"}\n")
             append("Activity: ${currentActivityName ?: "未知"}\n")
+
+            // 获取系统服务信息
+            try {
+                val shizukuManager = ShizukuServiceManager.getInstance()
+                val systemService = shizukuManager?.getSystemAccessibilityService()
+                if (systemService != null && systemService.isServiceAvailable()) {
+                    append("\n[Shizuku系统服务信息]\n")
+                    val windowInfo = systemService.getCurrentWindowInfo()
+                    append(windowInfo)
+                }
+            } catch (e: Exception) {
+                append("\n[Shizuku系统服务]: 不可用\n")
+            }
+
+            // 获取传统服务信息
+            val xyzAccessibilityService = XyzAccessibilityService.getInstance()
+            if (xyzAccessibilityService != null) {
+                append("\n[传统无障碍服务信息]\n")
+                append(xyzAccessibilityService.getCurrentWindowInfo())
+            } else {
+                append("\n[传统无障碍服务]: 未连接\n")
+            }
+
+            append("\n=====================================")
         }
     }
 
@@ -552,6 +579,19 @@ class XyzService : Service() {
      */
     fun printCurrentWindowInfo() {
         Log.d(TAG, getCurrentWindowInfo())
+    }
+
+    /**
+     * 检查系统级无障碍服务是否可用
+     */
+    fun isSystemAccessibilityServiceAvailable(): Boolean {
+        return try {
+            val service = ShizukuServiceManager.getInstance()?.getSystemAccessibilityService()
+            service?.isServiceAvailable() == true
+        } catch (e: Exception) {
+            Log.e(TAG, "检查系统级无障碍服务失败", e)
+            false
+        }
     }
 
     // 抢票相关方法

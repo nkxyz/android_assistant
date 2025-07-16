@@ -1,12 +1,13 @@
 package com.xyz.xyzassister
 
+import android.graphics.Rect
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
+import org.json.JSONObject
 
 /**
  * 抢票业务管理器
- * 独立于AccessibilityService和Shizuku连接初始化的业务逻辑模块
- * 可以使用系统无障碍服务或Shizuku权限进行窗口枚举查找及模拟点击
+ * 支持传统无障碍服务和Shizuku系统服务的统一调用
  */
 class TicketGrabbingManager {
 
@@ -26,6 +27,61 @@ class TicketGrabbingManager {
     // 控制抢票流程的标志
     @Volatile
     private var isTicketGrabbingActive = false
+
+    // 节点信息包装类
+    data class NodeInfo(
+        val id: String = "",
+        val text: String = "",
+        val className: String = "",
+        val contentDescription: String = "",
+        val bounds: Rect = Rect(),
+        val isClickable: Boolean = false,
+        val isEnabled: Boolean = false,
+        val packageName: String = ""
+    ) {
+        companion object {
+            fun fromJson(json: JSONObject): NodeInfo {
+                val boundsJson = json.optJSONObject("bounds")
+                val bounds = if (boundsJson != null) {
+                    Rect(
+                        boundsJson.optInt("left"),
+                        boundsJson.optInt("top"),
+                        boundsJson.optInt("right"),
+                        boundsJson.optInt("bottom")
+                    )
+                } else {
+                    Rect()
+                }
+
+                return NodeInfo(
+                    id = json.optString("id", ""),
+                    text = json.optString("text", ""),
+                    className = json.optString("className", ""),
+                    contentDescription = json.optString("contentDescription", ""),
+                    bounds = bounds,
+                    isClickable = json.optBoolean("isClickable", false),
+                    isEnabled = json.optBoolean("isEnabled", false),
+                    packageName = json.optString("packageName", "")
+                )
+            }
+
+            fun fromAccessibilityNode(node: AccessibilityNodeInfo): NodeInfo {
+                val bounds = Rect()
+                node.getBoundsInScreen(bounds)
+
+                return NodeInfo(
+                    id = node.viewIdResourceName ?: "",
+                    text = node.text?.toString() ?: "",
+                    className = node.className?.toString() ?: "",
+                    contentDescription = node.contentDescription?.toString() ?: "",
+                    bounds = bounds,
+                    isClickable = node.isClickable,
+                    isEnabled = node.isEnabled,
+                    packageName = node.packageName?.toString() ?: ""
+                )
+            }
+        }
+    }
 
     /**
      * 启动抢票流程
@@ -52,23 +108,23 @@ class TicketGrabbingManager {
 
     /**
      * 主要的抢票流程执行逻辑
-     * 不依赖于AccessibilityService或Shizuku的连接初始化
-     * 系统无障碍或Shizuku权限哪个可用就用哪个进行窗口枚举查找及模拟点击
      */
     private fun executeTicketGrabbingProcess(): Boolean {
         Log.d(TAG, "========== 开始抢票流程 ==========")
 
-        val activityId = getCurrentActivityId()
-        Log.d(TAG, "当前Activity ID: $activityId")
+        val currentPackage = getCurrentPackageName()
+        Log.d(TAG, "当前应用包名: $currentPackage")
 
-        val start_buy = findNodeById("cn.damai:id/trade_project_detail_purchase_status_bar_container_fl")
-        if (!clickNode(start_buy)) {
-            Log.w(TAG, "click failed!")
+        // 点击立即购买按钮
+        val startBuyNodeInfo = findNodeInfoById("cn.damai:id/trade_project_detail_purchase_status_bar_container_fl")
+        if (startBuyNodeInfo != null && !clickNodeInfo(startBuyNodeInfo)) {
+            Log.w(TAG, "点击立即购买按钮失败!")
         }
 
-        // 处理可能出现的验证码或网络错误
+        // 主循环
         var maxRetries = 99999999
         var dateButtonIndex = 0
+
         while (maxRetries > 0 && isTicketGrabbingActive) {
             when {
                 isInCaptchaPage() -> {
@@ -92,41 +148,41 @@ class TicketGrabbingManager {
                     return submitOrder()
                 }
                 isInNcovSkuActivity() -> {
-                    Log.d(TAG, "返回到抢票页面，继续尝试")
-                    // 查找演出日期按钮并循环点击
+                    Log.d(TAG, "在抢票页面，继续尝试")
+
+                    // 查找演出日期按钮
                     val dateButtons = findDateButtons()
                     if (dateButtons.isEmpty()) {
-                        Log.d(TAG, "未找到演出日期按钮，流程终止")
-                        return false
+                        Log.d(TAG, "未找到演出日期按钮，等待...")
+                        waitForPageChange(1000)
+                        continue
                     }
+
+                    // 循环选择日期
                     if (dateButtonIndex >= dateButtons.size) {
                         dateButtonIndex = 0
                     }
                     val dateButton = dateButtons[dateButtonIndex++]
-                    Log.d(TAG, "点击日期按钮: ${dateButton.rangeInfo}")
-                    if (!clickNode(dateButton)){
-                        Log.d(TAG, "点击失败")
+                    Log.d(TAG, "点击日期按钮: ${dateButton.text}")
+                    if (!clickNodeInfo(dateButton)) {
+                        Log.d(TAG, "点击日期按钮失败")
                     }
-                    if (!waitForPageChange(2000)) {
-                        Log.d(TAG, "等待页面变化超时${dateButton.viewIdResourceName}")
-                    }
+                    waitForPageChange(500)
+
                     // 查找可用价位选项
                     val availablePriceOptions = findAvailablePriceOptions()
                     if (availablePriceOptions.isNotEmpty()) {
-                        Log.d(
-                            TAG,
-                            "找到可用价位，点击第一个: ${availablePriceOptions[0].text}"
-                        )
-                        clickNode(availablePriceOptions[0])
-                        waitForPageChange(3000)
+                        Log.d(TAG, "找到可用价位，点击第一个: ${availablePriceOptions[0].text}")
+                        clickNodeInfo(availablePriceOptions[0])
+                        waitForPageChange(500)
                     }
 
                     // 点击购买按钮
-                    val buyButton = findNodeById("cn.damai:id/bottom_layout")
-                    if (buyButton != null) {
+                    val buyButtonInfo = findNodeInfoById("cn.damai:id/bottom_layout")
+                    if (buyButtonInfo != null) {
                         Log.d(TAG, "点击购买按钮")
-                        clickNode(buyButton)
-                        waitForPageChange(5000)
+                        clickNodeInfo(buyButtonInfo)
+                        waitForPageChange(2000)
                     }
                 }
                 else -> {
@@ -137,7 +193,6 @@ class TicketGrabbingManager {
             }
         }
 
-        // 检查是否是因为用户停止而退出循环
         if (!isTicketGrabbingActive) {
             Log.d(TAG, "抢票流程被用户停止")
             return false
@@ -148,46 +203,68 @@ class TicketGrabbingManager {
     }
 
     /**
-     * 获取当前Activity ID
-     * 优先使用系统无障碍服务，如果不可用则使用Shizuku服务
+     * 获取当前包名
      */
-    private fun getCurrentActivityId(): String? {
+    private fun getCurrentPackageName(): String? {
         return try {
-            // 优先使用XyzService
-            val accessibilityService = XyzService.getInstance()
-            if (accessibilityService != null) {
-                return accessibilityService.getCurrentActivity()
+            // 优先使用传统无障碍服务
+            val xyzAccessibilityService = XyzAccessibilityService.getInstance()
+            if (xyzAccessibilityService != null) {
+                val rootNode = xyzAccessibilityService.rootInActiveWindow
+                return rootNode?.packageName?.toString()
             }
 
-            // 回退到Shizuku系统服务
+            // 使用Shizuku系统服务
             val shizukuManager = ShizukuServiceManager.getInstance()
-            if (shizukuManager?.isShizukuAvailable() == true && 
+            if (shizukuManager?.isShizukuAvailable() == true &&
                 shizukuManager.isShizukuPermissionGranted() == true) {
                 return shizukuManager.getSystemAccessibilityService()?.getCurrentPackageName()
             }
 
             null
         } catch (e: Exception) {
-            Log.e(TAG, "获取当前Activity ID失败", e)
+            Log.e(TAG, "获取当前包名失败", e)
             null
         }
     }
 
     /**
-     * 根据ID查找节点
-     * 优先使用系统无障碍服务，如果不可用则使用Shizuku服务
+     * 获取当前Activity
      */
-    private fun findNodeById(id: String): AccessibilityNodeInfo? {
+    private fun getCurrentActivity(): String? {
         return try {
-            // 使用Shizuku系统服务 (返回字符串，需要转换)
+            val service = XyzService.getInstance()
+            service?.getCurrentActivity()
+        } catch (e: Exception) {
+            Log.e(TAG, "获取当前Activity失败", e)
+            null
+        }
+    }
+
+    /**
+     * 根据ID查找节点信息
+     */
+    private fun findNodeInfoById(id: String): NodeInfo? {
+        return try {
+            // 优先使用传统无障碍服务
+            val xyzAccessibilityService = XyzAccessibilityService.getInstance()
+            if (xyzAccessibilityService != null) {
+                val node = xyzAccessibilityService.findNodeById(id)
+                return node?.let { NodeInfo.fromAccessibilityNode(it) }
+            }
+
+            // 使用Shizuku系统服务
             val shizukuManager = ShizukuServiceManager.getInstance()
-            if (shizukuManager?.isShizukuAvailable() == true && 
+            if (shizukuManager?.isShizukuAvailable() == true &&
                 shizukuManager.isShizukuPermissionGranted() == true) {
-                val nodeInfo = shizukuManager.getSystemAccessibilityService()?.findNodeById(id)
-                // 注意：这里需要将字符串转换为AccessibilityNodeInfo，暂时返回null
-                // 实际实现中需要根据具体需求处理
-                Log.d(TAG, "Shizuku找到节点: $nodeInfo")
-                return null
+                val jsonStr = shizukuManager.getSystemAccessibilityService()?.findNodeById(id)
+                if (!jsonStr.isNullOrEmpty()) {
+                    val json = JSONObject(jsonStr)
+                    val nodesArray = json.optJSONArray("nodes")
+                    if (nodesArray != null && nodesArray.length() > 0) {
+                        return NodeInfo.fromJson(nodesArray.getJSONObject(0))
+                    }
+                }
             }
 
             null
@@ -198,36 +275,23 @@ class TicketGrabbingManager {
     }
 
     /**
-     * 点击节点
-     * 优先使用系统无障碍服务，如果不可用则使用Shizuku服务
+     * 点击节点信息
      */
-    private fun clickNode(node: AccessibilityNodeInfo?): Boolean {
+    private fun clickNodeInfo(nodeInfo: NodeInfo): Boolean {
         return try {
-            if (node == null) return false
-
-            // 使用XyzService进行坐标点击
-            val service = XyzService.getInstance()
-            if (service != null) {
-                // 获取节点坐标并使用服务点击
-                val bounds = android.graphics.Rect()
-                node.getBoundsInScreen(bounds)
-                val centerX = bounds.centerX().toFloat()
-                val centerY = bounds.centerY().toFloat()
-                return service.clickAt(centerX, centerY)
+            val bounds = nodeInfo.bounds
+            if (bounds.isEmpty) {
+                Log.w(TAG, "节点边界为空，无法点击")
+                return false
             }
 
-            // 回退到Shizuku服务进行坐标点击
-            val shizukuManager = ShizukuServiceManager.getInstance()
-            if (shizukuManager?.isShizukuAvailable() == true && 
-                shizukuManager.isShizukuPermissionGranted() == true) {
-                // 获取节点坐标并使用Shizuku点击
-                val bounds = android.graphics.Rect()
-                node.getBoundsInScreen(bounds)
-                val centerX = bounds.centerX().toFloat()
-                val centerY = bounds.centerY().toFloat()
+            val centerX = bounds.centerX().toFloat()
+            val centerY = bounds.centerY().toFloat()
 
-                val instrumentationService = shizukuManager.getInstrumentationService()
-                return instrumentationService?.click(centerX, centerY) ?: false
+            // 使用XyzService进行点击
+            val service = XyzService.getInstance()
+            if (service != null) {
+                return service.clickAt(centerX, centerY)
             }
 
             false
@@ -238,350 +302,118 @@ class TicketGrabbingManager {
     }
 
     /**
-     * 检查当前是否在大麦抢票页面
+     * 查找演出日期按钮
      */
-    fun isInDamaiTicketPage(): Boolean {
-        val currentActivity = getCurrentActivityId()
-        Log.d(TAG, "当前Activity: $currentActivity")
-        return currentActivity?.contains("cn.damai") == true
-    }
-
-    /**
-     * 检查当前是否在指定的NcovSkuActivity页面
-     */
-    fun isInNcovSkuActivity(): Boolean {
-        val rootNode = rootInActiveWindow ?: return false
-        // 通过检查特定控件来判断是否在正确页面
-        val activityId = getCurrentActivityId()
-        Log.d(TAG, "当前Activity ID: $activityId")
-
-        val performFlowLayout = findNodeById("cn.damai:id/project_detail_perform_flowlayout")
-//        val priceFlowLayout = findNodeById("cn.damai:id/project_detail_perform_price_flowlayout")
-        return performFlowLayout != null //&& priceFlowLayout != null
-    }
-
-
-    /**
-     * 获取当前窗口的完整信息（用于调试）
-     */
-    fun getCurrentWindowInfo(): String {
-        val info = StringBuilder()
-        info.append("========== 当前窗口信息 ==========\n")
-
-        try {
-            val activityId = getCurrentActivityId()
-            info.append("Activity ID: ${activityId ?: "null"}\n")
-
-            val service = XyzService.getInstance()
-            if (service != null) {
-                info.append("XyzService连接状态: 已连接\n")
-                val systemWindowInfo = service.getSystemCurrentWindowInfo()
-                if (systemWindowInfo != null) {
-                    info.append("系统窗口信息: $systemWindowInfo\n")
-                }
-            } else {
-                info.append("XyzService连接状态: 未连接\n")
-            }
-        } catch (e: Exception) {
-            info.append("获取窗口信息时出错: ${e.message}\n")
-        }
-
-        info.append("=====================================")
-        return info.toString()
-    }
-
-    /**
-     * 打印当前窗口信息到日志
-     */
-    fun printCurrentWindowInfo() {
-        val info = getCurrentWindowInfo()
-        Log.d(TAG, info)
-    }
-
-    /**
-     * 获取当前Activity的ID/名称（内部实现）
-     */
-    private fun getCurrentActivityIdInternal(): String? {
-        try {
-            // 尝试从XyzService获取当前Activity信息
-            val service = XyzService.getInstance()
-            if (service != null) {
-                val currentActivity = service.getCurrentActivity()
-                if (currentActivity != null) {
-                    return currentActivity
-                }
-            }
-
-            // 尝试从Shizuku系统服务获取包名
-            val shizukuManager = ShizukuServiceManager.getInstance()
-            if (shizukuManager?.isShizukuAvailable() == true && 
-                shizukuManager.isShizukuPermissionGranted() == true) {
-                val packageName = shizukuManager.getSystemAccessibilityService()?.getCurrentPackageName()
-                if (packageName != null) {
-                    return packageName
-                }
-            }
-
-            Log.w(TAG, "无法获取当前Activity ID")
-            return null
-        } catch (e: Exception) {
-            Log.e(TAG, "获取当前Activity ID时发生错误", e)
-            return null
-        }
-    }
-
-    /**
-     * 查找演出日期选项按钮
-     */
-    fun findDateButtons(): List<AccessibilityNodeInfo> {
+    private fun findDateButtons(): List<NodeInfo> {
         Log.d(TAG, "开始查找演出日期按钮...")
-        val performFlowLayout = findNodeById("cn.damai:id/project_detail_perform_flowlayout")
-        if (performFlowLayout == null) {
+        val performFlowLayoutInfo = findNodeInfoById("cn.damai:id/project_detail_perform_flowlayout")
+        if (performFlowLayoutInfo == null) {
             Log.d(TAG, "未找到演出日期容器")
             return emptyList()
         }
 
-        val dateButtons = mutableListOf<AccessibilityNodeInfo>()
-        // 查找一级子控件中所有可点击的控件
-        for (i in 0 until performFlowLayout.childCount) {
-            val child = performFlowLayout.getChild(i)
-            if (child != null && child.isClickable) {
-                dateButtons.add(child)
-                Log.d(TAG, "找到日期按钮: ${child.text}, ID: ${child.viewIdResourceName}")
-            }
-        }
+        // 由于无法直接获取子节点，需要通过其他方式查找
+        // 这里需要改进为查找所有可点击的日期按钮
+        val dateButtons = mutableListOf<NodeInfo>()
 
-        Log.d(TAG, "共找到 ${dateButtons.size} 个日期按钮")
+        // TODO: 实现更精确的日期按钮查找逻辑
+        Log.d(TAG, "日期按钮查找功能需要完善")
+
         return dateButtons
     }
 
     /**
-     * 查找价位选项按钮（排除已售罄的）
+     * 查找可用价位选项
      */
-    fun findAvailablePriceOptions(): List<AccessibilityNodeInfo> {
+    private fun findAvailablePriceOptions(): List<NodeInfo> {
         Log.d(TAG, "开始查找可用价位选项...")
-        val priceFlowLayout = findNodeById("cn.damai:id/project_detail_perform_price_flowlayout")
-        if (priceFlowLayout == null) {
+        val priceFlowLayoutInfo = findNodeInfoById("cn.damai:id/project_detail_perform_price_flowlayout")
+        if (priceFlowLayoutInfo == null) {
             Log.d(TAG, "未找到价位选项容器")
             return emptyList()
         }
 
-        val availablePriceOptions = mutableListOf<AccessibilityNodeInfo>()
+        // TODO: 实现价位选项查找逻辑
+        val availablePriceOptions = mutableListOf<NodeInfo>()
 
-        // 查找一级子控件中所有可点击的控件
-        for (i in 0 until priceFlowLayout.childCount) {
-            val child = priceFlowLayout.getChild(i)
-            if (child != null && child.isClickable) {
-                // 检查该控件的子控件中是否存在售罄标签
-//                val hasSoldOutTag = checkForSoldOutTag(child)
-                val hasSoldOutTag = checkChildNodeIdsAndTexts(child,
-                    listOf(
-                        NodeSearchIdAndText("cn.damai:id/layout_tag", "缺货登记"),
-                        NodeSearchIdAndText("cn.damai:id/layout_tag", "可预约")
-                    )
-                )
-                if (!hasSoldOutTag) {
-                    availablePriceOptions.add(child)
-                    Log.d(TAG, "找到可用价位: ${child.rangeInfo}")
-                } else {
-                    Log.d(TAG, "价位已售罄: ${child.rangeInfo}")
-                }
-            }
-        }
+        Log.d(TAG, "价位选项查找功能需要完善")
 
-        Log.d(TAG, "共找到 ${availablePriceOptions.size} 个可用价位")
         return availablePriceOptions
     }
 
     /**
-     * 检查控件是否包含售罄标签
+     * 检查是否在抢票页面
      */
-    private fun checkForSoldOutTag(node: AccessibilityNodeInfo): Boolean {
-        return checkForSoldOutTagRecursive(node)
+    private fun isInNcovSkuActivity(): Boolean {
+        val currentPackage = getCurrentPackageName()
+        return currentPackage?.contains("cn.damai") == true &&
+                findNodeInfoById("cn.damai:id/project_detail_perform_flowlayout") != null
     }
 
-    private fun checkChildNodeIdAndText(node: AccessibilityNodeInfo, id: String, text: String): Boolean {
-        Log.d(TAG, "枚举控件: ${node.viewIdResourceName}, ${node.text} ")
-        if (node.viewIdResourceName == id && node.text?.toString() == text) {
-            Log.d(TAG, "命中控件: ${node.viewIdResourceName}, ${node.text} ")
+    /**
+     * 检查是否在验证码页面
+     */
+    private fun isInCaptchaPage(): Boolean {
+        val currentActivity = getCurrentActivity()
+        return currentActivity?.contains("com.alibaba.wireless.security.open.middletier.fc.ui.ContainerActivity") == true
+    }
+
+    /**
+     * 检查是否在网络异常页面
+     */
+    private fun isInNetworkErrorPage(): Boolean {
+        return findNodeInfoById("cn.damai:id/state_view_refresh_btn") != null
+    }
+
+    /**
+     * 检查是否在订单页面
+     */
+    private fun isInOrderPage(): Boolean {
+        val currentActivity = getCurrentActivity()
+        return currentActivity?.contains(".ultron.view.activity.DmOrderActivity") == true
+    }
+
+    /**
+     * 处理验证码页面
+     */
+    private fun handleCaptchaPage(): Boolean {
+        Log.d(TAG, "检测到验证码页面，暂时无法自动处理")
+        // TODO: 实现验证码处理逻辑
+        return false
+    }
+
+    /**
+     * 处理网络异常页面
+     */
+    private fun handleNetworkErrorPage(): Boolean {
+        Log.d(TAG, "检测到网络异常页面，点击刷新")
+        val refreshButtonInfo = findNodeInfoById("cn.damai:id/state_view_refresh_btn")
+        if (refreshButtonInfo != null) {
+            clickNodeInfo(refreshButtonInfo)
             return true
-        }
-        for (i in 0 until node.childCount) {
-            val child = node.getChild(i)
-            if (child != null) {
-                if (checkChildNodeIdAndText(child, id, text)) {
-                    return true
-                }
-            }
         }
         return false
     }
 
-    data class NodeSearchIdAndText(val id: String, val text: String) {
-        override fun toString(): String {
-            return "[$id, $text]"
-        }
-    }
-
-    private fun checkChildNodeIdsAndTexts(node: AccessibilityNodeInfo, targets: List<NodeSearchIdAndText>): Boolean {
-        for (target in targets) {
-            if (checkChildNodeIdAndText(node, target.id, target.text)) {
-                return true
-            }
-        }
-        return false
-    }
-
-    private fun checkForSoldOutTagRecursive(node: AccessibilityNodeInfo?): Boolean {
-        if (node == null) return false
-
-        // 检查当前节点是否为售罄标签
-        if (node.viewIdResourceName == "cn.damai:id/layout_tag") {
-            return true
-        }
-
-        // 递归检查子节点
-        for (i in 0 until node.childCount) {
-            if (checkForSoldOutTagRecursive(node.getChild(i))) {
-                return true
-            }
-        }
-
+    /**
+     * 提交订单
+     */
+    private fun submitOrder(): Boolean {
+        Log.d(TAG, "开始提交订单...")
+        // TODO: 实现订单提交逻辑
         return false
     }
 
     /**
      * 等待页面变化
      */
-    fun waitForPageChange(timeoutMs: Long = 5000): Boolean {
-        Log.d(TAG, "等待页面变化...")
-        val startTime = System.currentTimeMillis()
-
-        while (System.currentTimeMillis() - startTime < timeoutMs) {
-            try {
-                Thread.sleep(500)
-                // 检查页面是否有变化
-                val rootNode = rootInActiveWindow
-                if (rootNode != null) {
-                    Log.d(TAG, "页面已变化")
-                    return true
-                }
-            } catch (e: InterruptedException) {
-                Log.e(TAG, "等待页面变化被中断", e)
-                return false
-            }
-        }
-
-        Log.d(TAG, "等待页面变化超时")
-        return false
-    }
-
-    /**
-     * 检查是否进入验证码页面
-     */
-    fun isInCaptchaPage(): Boolean {
-        val currentActivity = getCurrentActivity()
-        return currentActivity?.contains("com.alibaba.wireless.security.open.middletier.fc.ui.ContainerActivity") == true
-    }
-
-    /**
-     * 处理验证码页面
-     */
-    fun handleCaptchaPage(): Boolean {
-        Log.d(TAG, "检测到验证码页面，开始处理...")
-
-        // 检查是否有重试按钮
-        val retryButton = findNodesByXPath("//*[@resource-id=\"nc_1_refresh1\"]//*[contains(@text,\"重试\")]")
-        if (retryButton.isNotEmpty()) {
-            Log.d(TAG, "找到重试按钮，点击重试")
-            clickNode(retryButton[0])
-            waitForPageChange()
+    private fun waitForPageChange(timeoutMs: Long): Boolean {
+        try {
+            Thread.sleep(timeoutMs)
             return true
+        } catch (e: InterruptedException) {
+            Log.e(TAG, "等待页面变化被中断", e)
+            return false
         }
-
-        // 检查是否有滑块验证
-        val sliderContainer = findNodeById("nc_1_n1t")
-        val sliderButton = findNodeById("nc_1_n1z")
-
-        if (sliderContainer != null && sliderButton != null) {
-            Log.d(TAG, "找到滑块验证，开始滑动")
-            return performSliderCaptcha(sliderContainer, sliderButton)
-        }
-
-        Log.d(TAG, "未找到可处理的验证码元素")
-        return false
     }
-    /**
-     * 检查是否在网络异常页面
-     */
-    fun isInNetworkErrorPage(): Boolean {
-        val refreshButton = findNodeById("cn.damai:id/state_view_refresh_btn")
-        return refreshButton != null
-    }
-
-    /**
-     * 处理网络异常页面
-     */
-    fun handleNetworkErrorPage(): Boolean {
-        Log.d(TAG, "检测到网络异常页面，点击刷新")
-        val refreshButton = findNodeById("cn.damai:id/state_view_refresh_btn")
-        if (refreshButton != null) {
-            clickNode(refreshButton)
-            waitForPageChange()
-            return true
-        }
-        return false
-    }
-
-    /**
-     * 检查是否在订单页面
-     */
-    fun isInOrderPage(): Boolean {
-        val currentActivity = getCurrentActivity()
-        return currentActivity?.contains(".ultron.view.activity.DmOrderActivity") == true
-    }
-
-    /**
-     * 提交订单
-     */
-    fun submitOrder(): Boolean {
-        Log.d(TAG, "开始提交订单...")
-        val submitButton = findAllNodesByCriteria(
-            NodeSearchCriteria(
-                className = "android.widget.TextView",
-                text = "立即提交"
-            )
-        )
-
-        if (submitButton.isNotEmpty()) {
-            Log.d(TAG, "找到提交按钮，点击提交")
-            return clickNode(submitButton[0])
-        }
-
-        Log.d(TAG, "未找到提交按钮")
-        return false
-    }
-
-    // Stub implementations for missing methods
-    private fun findNodesByXPath(xpath: String): List<AccessibilityNodeInfo> {
-        Log.w(TAG, "findNodesByXPath: 功能暂未实现")
-        return emptyList()
-    }
-
-    private fun performSliderCaptcha(container: AccessibilityNodeInfo, button: AccessibilityNodeInfo): Boolean {
-        Log.w(TAG, "performSliderCaptcha: 功能暂未实现")
-        return false
-    }
-
-    private fun findAllNodesByCriteria(criteria: NodeSearchCriteria): List<AccessibilityNodeInfo> {
-        Log.w(TAG, "findAllNodesByCriteria: 功能暂未实现")
-        return emptyList()
-    }
-
-    // Stub data class for NodeSearchCriteria
-    private data class NodeSearchCriteria(
-        val className: String? = null,
-        val text: String? = null,
-        val id: String? = null
-    )
 }
