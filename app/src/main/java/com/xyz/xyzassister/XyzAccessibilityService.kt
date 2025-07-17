@@ -1723,7 +1723,8 @@ class XyzAccessibilityService : AccessibilityService() {
             if (rootNode != null) {
                 val className = rootNode.className?.toString()
                 currentClassName = className
-                currentActivityName = extractActivityName(className)
+                currentActivityName = className
+//                extractActivityName(className)
                 return currentActivityName ?: className
             }
 
@@ -1781,8 +1782,8 @@ class XyzAccessibilityService : AccessibilityService() {
 //                val hasSoldOutTag = checkForSoldOutTag(child)
                 val hasSoldOutTag = checkChildNodeIdsAndTexts(child,
                     listOf(
-                        NodeSearchIdAndText("cn.damai:id/layout_tag", "缺货登记"),
-                        NodeSearchIdAndText("cn.damai:id/layout_tag", "可预约")
+                        NodeSearchIdAndText("cn.damai:id/tv_tag", "缺货登记"),
+                        NodeSearchIdAndText("cn.damai:id/tv_tag", "可预约")
                         )
                 )
                 if (!hasSoldOutTag) {
@@ -1806,7 +1807,7 @@ class XyzAccessibilityService : AccessibilityService() {
     }
 
     private fun checkChildNodeIdAndText(node: AccessibilityNodeInfo, id: String, text: String): Boolean {
-        Log.d(TAG, "枚举控件: ${node.viewIdResourceName}, ${node.text} ")
+//        Log.d(TAG, "枚举控件: ${node.viewIdResourceName}, ${node.text} ")
         if (node.viewIdResourceName == id && node.text?.toString() == text) {
             Log.d(TAG, "命中控件: ${node.viewIdResourceName}, ${node.text} ")
             return true
@@ -1885,8 +1886,9 @@ class XyzAccessibilityService : AccessibilityService() {
      * 检查是否进入验证码页面
      */
     fun isInCaptchaPage(): Boolean {
-        val currentActivity = getCurrentActivity()
-        return currentActivity?.contains("com.alibaba.wireless.security.open.middletier.fc.ui.ContainerActivity") == true
+//        val currentActivity = getCurrentActivity()
+//        return currentActivity?.contains("com.alibaba.wireless.security.open.middletier.fc.ui.ContainerActivity") == true
+        return findNodeById("nc_1_n1t") != null
     }
 
     /**
@@ -1896,10 +1898,11 @@ class XyzAccessibilityService : AccessibilityService() {
         Log.d(TAG, "检测到验证码页面，开始处理...")
 
         // 检查是否有重试按钮
-        val retryButton = findNodesByXPath("//*[@resource-id=\"nc_1_refresh1\"]//*[contains(@text,\"重试\")]")
-        if (retryButton.isNotEmpty()) {
+//        val retryButton = findNodesByXPath("//*[@resource-id=\"nc_1_refresh1\"]//*[contains(@text,\"重试\")]")
+        val retryButton = findNodeById("nc_1_refresh1")
+        if (retryButton != null) {
             Log.d(TAG, "找到重试按钮，点击重试")
-            clickNode(retryButton[0])
+            clickNode(retryButton)
             waitForPageChange()
             return true
         }
@@ -2001,8 +2004,9 @@ class XyzAccessibilityService : AccessibilityService() {
      * 检查是否在订单页面
      */
     fun isInOrderPage(): Boolean {
-        val currentActivity = getCurrentActivity()
-        return currentActivity?.contains(".ultron.view.activity.DmOrderActivity") == true
+        val currentActivity = getCurrentActivityIdInternal()
+        return currentActivity?.contains("DmOrderActivity") == true
+//        return findNodeById("cn.damai:id/trade_project_detail_purchase_status_bar_container_fl") != null
     }
 
     /**
@@ -2010,6 +2014,13 @@ class XyzAccessibilityService : AccessibilityService() {
      */
     fun submitOrder(): Boolean {
         Log.d(TAG, "开始提交订单...")
+        val tryButton = findAllNodesByCriteria(
+            NodeSearchCriteria(
+                className = "android.widget.TextView",
+                text = "继续尝试"
+            )
+        )
+
         val submitButton = findAllNodesByCriteria(
             NodeSearchCriteria(
                 className = "android.widget.TextView",
@@ -2076,7 +2087,7 @@ class XyzAccessibilityService : AccessibilityService() {
                 isInCaptchaPage() -> {
                     Log.d(TAG, "进入验证码页面")
                     if (handleCaptchaPage()) {
-                        waitForPageChange(3000)
+                        waitForPageChange(300)
                     } else {
                         maxRetries--
                     }
@@ -2084,7 +2095,7 @@ class XyzAccessibilityService : AccessibilityService() {
                 isInNetworkErrorPage() -> {
                     Log.d(TAG, "进入网络错误页面")
                     if (handleNetworkErrorPage()) {
-                        waitForPageChange(3000)
+                        waitForPageChange(300)
                     } else {
                         maxRetries--
                     }
@@ -2109,7 +2120,7 @@ class XyzAccessibilityService : AccessibilityService() {
                     if (!clickNode(dateButton)){
                         Log.d(TAG, "点击失败")
                     }
-                    if (!waitForPageChange(2000)) {
+                    if (!waitForPageChange(300)) {
                         Log.d(TAG, "等待页面变化超时${dateButton.viewIdResourceName}")
                     }
                     // 3. 查找可用价位选项
@@ -2120,20 +2131,20 @@ class XyzAccessibilityService : AccessibilityService() {
                             "找到可用价位，点击第一个: ${availablePriceOptions[0].text}"
                         )
                         clickNode(availablePriceOptions[0])
-                        waitForPageChange(3000)
-                    }
+                        waitForPageChange(300)
 
-                    // 4. 点击购买按钮
-                    val buyButton = findNodeById("cn.damai:id/bottom_layout")
-                    if (buyButton != null) {
-                        Log.d(TAG, "点击购买按钮")
-                        clickNode(buyButton)
-                        waitForPageChange(5000)
+                        // 4. 点击购买按钮
+                        val buyButton = findNodeById("cn.damai:id/btn_buy_view")
+                        if (buyButton != null) {
+                            Log.d(TAG, "点击购买按钮")
+                            clickNode(buyButton)
+                            waitForPageChange(300)
+                        }
                     }
                 }
                 else -> {
                     Log.d(TAG, "未知页面状态，等待...")
-                    waitForPageChange(2000)
+                    waitForPageChange(300)
                     maxRetries--
                 }
             }
